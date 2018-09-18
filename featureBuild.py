@@ -26,6 +26,7 @@ class FeatureBuilder:
         return stockFeatures
 
 
+
 class StockQueues:
 
     def __init__(self, data, stockName, queueSize):
