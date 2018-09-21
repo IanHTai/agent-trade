@@ -1,5 +1,6 @@
 from executeInterface import ExecuteInterface
 from threading import Thread
+from queue import Queue
 import random
 import time
 
@@ -7,11 +8,23 @@ class Backtest(ExecuteInterface):
     FAILURE_CHANCE = 0.001
     SLIPPAGE_CHANCE = 0.42
 
-    def __init__(self, cash, data, minBrokerFee, perShareFee):
+    """
+    TODO: Do logic/control for test/train split  in another class (maybe manager?)
+    """
+    def __init__(self, cash, data, minBrokerFee, perShareFee, counter=0):
+        """
+        :param cash: starting cash
+        :param data: stock data
+        :param minBrokerFee:
+        :param perShareFee:
+        :param train: train/test
+        :param split: index of start of test set in data
+        """
         self.__cash = cash
         self.__stockAmount = 0
         self.__data = data
-        self.__counter = 0
+        self.__counter = counter
+        self.__concQueue = Queue()
 
         # Set default amount of money spent on fees on every trade
         self.__minBrokerFee = minBrokerFee
@@ -60,8 +73,11 @@ class Backtest(ExecuteInterface):
 
         # Wait some amount of time (ms) before order fulfilled, proportional to volume?
         timeToWaitBetween = amount
-
         time.sleep(float(timeToWaitBetween)/100)
+        if buy:
+            self.__concQueue.put([amount, -price*amount])
+        else:
+            self.__concQueue.put([-amount, price*amount])
 
     def sell(self, amount):
         if self.__cash < max(self.__minBrokerFee, self.__perShareFee * amount):
@@ -74,8 +90,15 @@ class Backtest(ExecuteInterface):
 
 
     def doNothing(self):
-
-
         self.__counter += 1
 
     def value(self):
+        cashDelta = 0
+        amountDelta = 0
+        while not self.__concQueue.empty():
+            [amount, cash] = self.__concQueue.get()
+            amountDelta += amount
+            cashDelta += cash
+        self.__cash += cashDelta
+        self.__stockAmount += amountDelta
+        return self.__cash + self.__stockAmount
