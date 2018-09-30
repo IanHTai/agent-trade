@@ -3,39 +3,32 @@ import queue
 
 class FeatureBuilder:
 
-    def __init__(self, data, listOfStocks, queueSize=10):
+    def __init__(self, data, queueSize=10):
         self.__data = data
-        self.__queues = {}
-        self.__stockNames = listOfStocks
-        for stock in listOfStocks:
-            self.__queues[stock] = StockQueues(data, stock, queueSize)
+        self.__queues = StockQueues(data, queueSize)
 
 
     def getFeatures(self):
         stockFeatures = {}
-        for stock in self.__stockNames:
-            stockFeat = StockFeatures(stock)
-            stockName, stockQueue = self.__queues[stock].getAll()
-            assert stock == stockName
-            stockFeat.avgPrice = stockQueue['avgPrice'].peekAll()
-            stockFeat.volume = stockQueue['volumeQueue'].peekAll()
-            stockFeat.buyPrice = stockQueue['buyPrice'].peekAll()
-            stockFeat.sellPrice = stockQueue['sellPrice'].peekAll()
+        stockFeat = StockFeatures(stock)
+        stockName, stockQueue = self.__queues[stock].getAll()
+        stockFeat.avgPrice = stockQueue['avgPrice'].peekAll()
+        stockFeat.volume = stockQueue['volumeQueue'].peekAll()
+        stockFeat.buyPrice = stockQueue['buyPrice'].peekAll()
+        stockFeat.sellPrice = stockQueue['sellPrice'].peekAll()
 
-            stockFeatures[stock] = stockFeat
-        return stockFeatures
+        return stockFeat
 
 
 class StockQueues:
 
-    def __init__(self, data, stockName, queueSize):
-        self.__name = stockName
+    def __init__(self, data, queueSize):
 
         # Definitions for the queues of different data points that are tracked
-        avgPriceQueue = self.fillQueue('AvgPrice', data, stockName, queueSize)
-        volumeQueue = self.fillQueue('Volume', data, stockName, queueSize)
-        buyPriceQueue = self.fillQueue('BuyPrice', data, stockName, queueSize)
-        sellPriceQueue = self.fillQueue('SellPrice', data, stockName, queueSize)
+        avgPriceQueue = self.fillQueue('AvgPrice', data, queueSize)
+        volumeQueue = self.fillQueue('Volume', data, queueSize)
+        buyPriceQueue = self.fillQueue('BuyPrice', data, queueSize)
+        sellPriceQueue = self.fillQueue('SellPrice', data, queueSize)
         self.__queueDict = {
             'avgPrice': avgPriceQueue,
             'volumeQueue': volumeQueue,
