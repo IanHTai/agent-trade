@@ -14,11 +14,11 @@ class Backtest(ExecuteInterface):
     def __init__(self, cash, data, minBrokerFee, perShareFee, counter=0):
         """
         :param cash: starting cash
-        :param data: stock data
+        :param data: stock resources
         :param minBrokerFee:
         :param perShareFee:
         :param train: train/test
-        :param split: index of start of test set in data
+        :param split: index of start of test set in resources
         """
         self.__cash = cash
         self.__stockAmount = 0
@@ -47,7 +47,7 @@ class Backtest(ExecuteInterface):
                 return False
             else:
                 self.__cash -= max(self.__minBrokerFee, self.__perShareFee * amount)
-                # TODO: figure out data structure
+                # TODO: figure out resources structure
                 price = self.__data.get('avgPrice', self.__counter)
                 self.__counter += 1
                 Thread(target=self.buyOrder, args=(price, amount)).start()

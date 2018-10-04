@@ -31,7 +31,7 @@ class StockQueues:
     def __init__(self, data, stockName, queueSize):
         self.__name = stockName
 
-        # Definitions for the queues of different data points that are tracked
+        # Definitions for the queues of different resources points that are tracked
         avgPriceQueue = self.fillQueue('AvgPrice', data, stockName, queueSize)
         volumeQueue = self.fillQueue('Volume', data, stockName, queueSize)
         buyPriceQueue = self.fillQueue('BuyPrice', data, stockName, queueSize)
