@@ -79,6 +79,8 @@ class DataAggregator:
                 # The boundaries 8 am and 5 pm are chosen to mitigate chances of bugs regarding Daylight Savings Time
                 # At the cost of 120 additional requests per work day
                 print("Market's closed", DSTDateTime(timezone=self.timezone_string).datetime)
+                sleepTime = (60 - DSTDateTime(timezone=self.timezone_string).datetime.second)%60
+                time.sleep(sleepTime)
                 sleepTime = ((60 - DSTDateTime(timezone=self.timezone_string).datetime.minute)%60) * 60
                 time.sleep(sleepTime)
                 print("Adjusted minute to 00", DSTDateTime(timezone=self.timezone_string).datetime)
