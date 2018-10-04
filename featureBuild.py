@@ -10,7 +10,7 @@ class FeatureBuilder:
 
     def getFeatures(self):
         stockFeatures = {}
-        stockFeat = StockFeatures(stock)
+        stockFeat = StockFeatures()
         stockName, stockQueue = self.__queues[stock].getAll()
         stockFeat.avgPrice = stockQueue['avgPrice'].peekAll()
         stockFeat.volume = stockQueue['volumeQueue'].peekAll()
