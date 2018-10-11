@@ -145,3 +145,6 @@ class Backtest(ExecuteInterface):
             else:
                 done = False
             return self.__data[self.__counter], reward, done, {}
+
+    def reset(self):
+        self.__counter = 0

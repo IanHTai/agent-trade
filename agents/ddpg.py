@@ -5,11 +5,15 @@ from keras.optimizers import Adam
 from keras.initializers import RandomUniform
 import random
 import numpy as np
+import keras.backend as K
+import tensorflow as tf
+
 
 class DeepDPG(BaseAgent):
     def __init__(self, state_shape, criticParams=CriticParams(), policyParams=PolicyParams(), OUParams=OUParams()):
         self.state_shape = state_shape
         self.criticParams = criticParams
+        self.policyParams = policyParams
         self.current_noise = 0
         self.OUParams = OUParams
 
@@ -18,14 +22,21 @@ class DeepDPG(BaseAgent):
         """
         self.episodes = 1000
         self.batch_size = 64
+        self.tau = 0.001
 
         self.replayBuffer = ReplayBuffer(max_size=1e6)
 
-        self.critic_model = self.buildCriticNet(state_shape, criticParams)
-        self.policy_model = self.buildPolicyNet(state_shape, policyParams)
+        self.critic_model, self.criticS, self.criticA, self.criticOut = self.buildCriticNet(state_shape, criticParams)
 
-        self.critic_copy = clone_model(self.critic_model)
-        self.critic_copy.set_weights(self.critic_model.get_weights())
+
+        # Improvised from https://github.com/germain-hug/Deep-RL-Keras/blob/master/DDPG/critic.py
+        self.action_grads = K.function([self.criticS, self.criticA],
+                                       K.gradients(self.criticOut, [self.criticA]))
+
+        self.policy_model, self.policyS, self.policyOut = self.buildPolicyNet(state_shape, policyParams)
+
+        self.critic_target = clone_model(self.critic_model)
+        self.critic_target.set_weights(self.critic_model.get_weights())
 
         self.target_policy_model = clone_model(self.policy_model)
         self.target_policy_model.set_weights(self.policy_model.get_weights())
@@ -51,7 +62,7 @@ class DeepDPG(BaseAgent):
         adam = Adam(lr=params.learning_rate, decay=params.weight_decay)
         model.compile(loss='mse', optimizer=adam)
 
-        return model
+        return model, _state, _action, _out
 
     def buildPolicyNet(self, state_shape, params):
         _state = Input(shape=(state_shape,))
@@ -68,9 +79,21 @@ class DeepDPG(BaseAgent):
         _out = Dense(1, activation='tanh', kernel_initializer=uniform_init, bias_initializer=uniform_init)(h5)
 
         model = Model(input=[_state], output=_out)
-        adam = Adam(lr=params.learning_rate)
-        model.compile(loss='mse', optimizer=adam)
-        return model
+
+        return model, _state, _out
+
+    def criticGrads(self, states, actions):
+        """
+        Returns the gradients of the critic network w.r.t. action taken
+        Used to find the policy gradient of the actor network
+        """
+        return self.action_grads([states, actions])
+
+    def trainActor(self, action_grads, params):
+        params_grad = tf.gradients(self.policyOut, self.policy_model.trainable_weights, -action_grads)
+        zipped_grads = zip(params_grad, self.policy_model.trainable_weights)
+        return tf.train.AdamOptimizer(learning_rate=params.learning_rate).apply_gradients(zipped_grads)
+
 
     def noise(self, params):
         self.current_noise += params.theta * (params.mu + self.current_noise) + params.sigma * random.gauss(0, 1)
@@ -99,14 +122,17 @@ class DeepDPG(BaseAgent):
         for episode in range(0, self.episodes):
             self.current_noise = 0
             state = featureBuilder.getFeatures()
+            cumulative_reward = 1
             done = False
             while not done:
                 prev_value = backtester.value()
                 action = self.zeroFriendly(self.policy_model.predict(state) + self.noise(self.OUParams))
 
-                new_state, reward, done, info = backtester.step(action)
-                self.replayBuffer.add(state=state, action=action, reward=reward, next_state=new_state)
+                raw_new_state, reward, done, info = backtester.step(action)
+                new_state = featureBuilder.transform(raw_new_state)
+                self.replayBuffer.add(state=state, action=action, reward=reward, next_state=new_state, done=done)
                 state = new_state
+                cumulative_reward *= reward
 
                 samples = []
                 for i in range(0, self.batch_size):
@@ -116,13 +142,36 @@ class DeepDPG(BaseAgent):
                 actions = np.asarray(e[1] for e in samples)
                 rewards = np.asarray(e[2] for e in samples)
                 next_states = np.asarray(e[3] for e in samples)
-                y_i = np.add(rewards, self.criticParams.discount * self.critic_copy.predict(next_states, self.target_policy_model.predict(next_states)))
+                dones = np.asarray(e[4] for e in samples)
+                y_i = np.asarray(e[2] for e in samples)
+
+                for i in len(states):
+                    if dones[i]:
+                        y_i[i] = rewards[i]
+                    else:
+                        y_i[i] = rewards[i] + self.criticParams.discount * self.critic_target.predict(next_states, self.target_policy_model.predict(next_states))
+
                 # TODO finish up training sequence
+                self.critic_model.train_on_batch([states, actions], y_i)
 
+                self.trainActor(self.criticGrads(states, actions), params=self.policyParams)
+                self.updateTargets()
 
+            backtester.reset()
+            print("Episode", episode, "complete. Cumulative reward:", cumulative_reward)
 
+            # SAVE WEIGHTS
 
+    def updateTargets(self):
+        critic_target_weights = self.critic_target.get_weights()
 
+        actor_target_weights = self.target_policy_model.get_weights()
+
+        critic_target_weights = self.tau * self.critic_model.get_weights() + (1 - self.tau) * critic_target_weights
+        actor_target_weights = self.tau * self.policy_model.get_weights() + (1 - self.tau) * actor_target_weights
+
+        self.critic_target.set_weights(critic_target_weights)
+        self.target_policy_model.set_weights(actor_target_weights)
 
     def zeroFriendly(self, action):
         """
@@ -138,9 +187,6 @@ class DeepDPG(BaseAgent):
     def runOnce(self, features):
         raise NotImplementedError()
 
-    def updateClones(self):
-        self.critic_copy = clone_model(self.critic_model)
-        self.critic_copy.set_weights(self.critic_model.get_weights())
 
 class CriticParams:
     def __init__(self, filters=[32,32,32], kernel_size=[3,3,3], dense_units=[200,200], dropout=0.25):
@@ -179,7 +225,7 @@ class ReplayBuffer:
     def add(self, state, action, reward, next_state, done):
         while len(self.replayList) > self.max_size:
             del self.replayList[0]
-        self.replayList.append([state, action, reward, next_state])
+        self.replayList.append([state, action, reward, next_state, done])
 
     def get(self):
         return self.replayList[random.randint(0, len(self.replayList) - 1)]
