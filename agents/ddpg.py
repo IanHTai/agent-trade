@@ -7,6 +7,7 @@ import random
 import numpy as np
 import keras.backend as K
 import tensorflow as tf
+import datetime
 
 
 class DeepDPG(BaseAgent):
@@ -105,6 +106,8 @@ class DeepDPG(BaseAgent):
     def train(self, featureBuilder, backtester):
         #TODO : FEATUREBUILDER and add stock amount to state info
 
+        train_cumulative_rewards = []
+        test_cumulative_rewards = []
 
         # Populate replaybuffer with random actions first
         for episode in range(0, 2):
@@ -134,9 +137,7 @@ class DeepDPG(BaseAgent):
                 state = new_state
                 cumulative_reward *= reward
 
-                samples = []
-                for i in range(0, self.batch_size):
-                    samples.append(self.replayBuffer.get())
+                samples = self.replayBuffer.getBatch(self.batch_size)
 
                 states = np.asarray(e[0] for e in samples)
                 actions = np.asarray(e[1] for e in samples)
@@ -150,17 +151,70 @@ class DeepDPG(BaseAgent):
                         y_i[i] = rewards[i]
                     else:
                         y_i[i] = rewards[i] + self.criticParams.discount * self.critic_target.predict(next_states, self.target_policy_model.predict(next_states))
-
-                # TODO finish up training sequence
+                        
                 self.critic_model.train_on_batch([states, actions], y_i)
 
                 self.trainActor(self.criticGrads(states, actions), params=self.policyParams)
                 self.updateTargets()
 
             backtester.reset()
-            print("Episode", episode, "complete. Cumulative reward:", cumulative_reward)
+            print("Training Episode", episode, "Complete. Cumulative Reward:", cumulative_reward)
 
-            # SAVE WEIGHTS
+            train_cumulative_rewards.append(cumulative_reward)
+
+            if episode % 10 == 0:
+                """
+                Testing, without action space noise
+                """
+                backtester.test(True)
+                state = featureBuilder.getFeatures()
+
+                #Feature builder shouldn't need to be set in testing mode since its queues should already be filled with the
+                #last of the training sequence's data
+
+                test_cumulative_reward = 1
+                test_done = False
+
+                while not test_done:
+                    prev_value = backtester.value()
+                    action = self.zeroFriendly(self.policy_model.predict(state))
+
+                    raw_new_state, reward, test_done, info = backtester.step(action)
+                    new_state = featureBuilder.transform(raw_new_state)
+
+                    state = new_state
+
+                    test_cumulative_reward *= reward
+
+                backtester.test(False)
+                backtester.reset()
+
+                print("Testing Episode Complete. Cumulative Test Reward:", test_cumulative_reward)
+
+                test_cumulative_rewards.append(test_cumulative_reward)
+
+
+
+        # SAVE WEIGHTS
+
+        # Use most recent test_cumulative_reward for inclusion in filename
+
+        filename_root = "model_backups\\" + datetime.datetime.now().strftime("%y_%m_%d_%H_%M") + "_" + str(test_cumulative_reward)
+
+        actor_model_name = filename_root + "_actor.h5"
+
+        critic_model_name = filename_root + "_critic.h5"
+
+        self.policy_model.save_weights(actor_model_name)
+        self.critic_model.save_weights(critic_model_name)
+
+        return train_cumulative_rewards, test_cumulative_rewards, actor_model_name, critic_model_name
+
+    def loadModels(self, actor_model_name, critic_model_name):
+        self.critic_model.load_weights(critic_model_name)
+        self.policy_model.load_weights(actor_model_name)
+        self.target_policy_model.load_weights(actor_model_name)
+        self.critic_target.load_weights(critic_model_name)
 
     def updateTargets(self):
         critic_target_weights = self.critic_target.get_weights()
@@ -175,12 +229,12 @@ class DeepDPG(BaseAgent):
 
     def zeroFriendly(self, action):
         """
-        Makes action space between [-1e-1, 1e-1] = 0, since continuous NN will likely not output perfect 0.0
+        Makes action space between [-1e-2, 1e-2] = 0, since continuous NN will likely not output perfect 0.0
         :param action: action output from NN
         :return: zero-friendly action
         """
 
-        if action <= 1e-1 or action >= -1e-1:
+        if action <= 1e-2 and action >= -1e-2:
             action = 0.0
         return action
 
@@ -190,10 +244,10 @@ class DeepDPG(BaseAgent):
 
 class CriticParams:
     def __init__(self, filters=[32,32,32], kernel_size=[3,3,3], dense_units=[200,200], dropout=0.25):
-        self.filters = filter
+        self.filters = filters
         self.kernelSize = kernel_size
         self.denseUnits = dense_units
-        self.dropout = 0.25
+        self.dropout = dropout
         self.learning_rate = 1e-3 # PLACEHOLDER
         self.discount = 0.99
         self.weight_decay = 1e-2
@@ -203,10 +257,10 @@ class CriticParams:
 
 class PolicyParams:
     def __init__(self, filters=[32,32,32], kernel_size=[3,3,3], dense_units=[200,200], dropout=0.25):
-        self.filters = filter
+        self.filters = filters
         self.kernelSize = kernel_size
         self.denseUnits = dense_units
-        self.dropout = 0.25
+        self.dropout = dropout
         self.learning_rate = 1e-4 # PLACEHOLDER
         self.init_minval = -3e-4
         self.init_maxval = 3e-4
@@ -229,3 +283,6 @@ class ReplayBuffer:
 
     def get(self):
         return self.replayList[random.randint(0, len(self.replayList) - 1)]
+
+    def getBatch(self, batchSize):
+        return np.random.choice(self.replayList, size=batchSize, replace=True)

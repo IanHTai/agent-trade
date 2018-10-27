@@ -12,13 +12,14 @@ class Backtest(ExecuteInterface):
     """
     TODO: Do logic/control for test/train split  in another class (maybe manager?)
     """
-    def __init__(self, cash, data, minBrokerFee, perShareFee, counter=0, simple=True):
+    def __init__(self, cash, data, minBrokerFee, perShareFee, counter=0, trainSplit=0.8, simple=True):
         """
         :param cash: starting cash
         :param data: stock data
         :param minBrokerFee:
         :param perShareFee:
         :param counter: current index pointer in dataset
+        :param trainSplit: train/test split ratio
         :param simple: False: use slipping/delay simulator
         """
         self.__cash = cash
@@ -27,6 +28,11 @@ class Backtest(ExecuteInterface):
         self.__counter = counter
         self.__concQueue = Queue()
         self.__simple = simple
+
+        self.__train_len = trainSplit*len(data)
+        self.__test = False
+
+        self.__counter_limit = self.__train_len
 
         # Set default amount of money spent on fees on every trade
         self.__minBrokerFee = minBrokerFee
@@ -124,7 +130,7 @@ class Backtest(ExecuteInterface):
         if actionValue > 0:
             success = self.buy(math.ceil(actionValue*math.floor(self.__cash/self.__data.get('avgPrice', self.__counter))))
             reward = self.value()/float(old_value) - 1
-            if self.__counter == len(self.__data) - 1:
+            if self.__counter >= self.__counter_limit - 1:
                 done = True
             else:
                 done = False
@@ -132,7 +138,7 @@ class Backtest(ExecuteInterface):
         elif actionValue < 0:
             success = self.sell(math.ceil(actionValue*self.__stockAmount))
             reward = self.value() / float(old_value) - 1
-            if self.__counter == len(self.__data) - 1:
+            if self.__counter >= self.__counter_limit - 1:
                 done = True
             else:
                 done = False
@@ -140,7 +146,7 @@ class Backtest(ExecuteInterface):
         else:
             success = self.doNothing()
             reward = self.value() / float(old_value) - 1
-            if self.__counter == len(self.__data) - 1:
+            if self.__counter >= self.__counter_limit - 1:
                 done = True
             else:
                 done = False
@@ -148,3 +154,13 @@ class Backtest(ExecuteInterface):
 
     def reset(self):
         self.__counter = 0
+
+    def test(self, test_bool=False):
+        self.__test = test_bool
+
+        if test_bool:
+            self.__counter = self.__train_len
+            self.__counter_limit = len(self.__data)
+        else:
+            self.__counter = 0
+            self.__counter_limit = self.__train_len
