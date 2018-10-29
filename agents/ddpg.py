@@ -58,7 +58,7 @@ class DeepDPG(BaseAgent):
 
         _out = Dense(1, activation='tanh', kernel_initializer=uniform_init, bias_initializer=uniform_init)(h6)
 
-        model = Model(input=[_state, _action], output=_out)
+        model = Model(inputs=[_state, _action], outputs=_out)
 
         adam = Adam(lr=params.learning_rate, decay=params.weight_decay)
         model.compile(loss='mse', optimizer=adam)
@@ -79,7 +79,7 @@ class DeepDPG(BaseAgent):
 
         _out = Dense(1, activation='tanh', kernel_initializer=uniform_init, bias_initializer=uniform_init)(h5)
 
-        model = Model(input=[_state], output=_out)
+        model = Model(inputs=[_state], outputs=_out)
 
         return model, _state, _out
 
