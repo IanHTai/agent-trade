@@ -1,6 +1,6 @@
 from .baseAgent import BaseAgent
 from keras.models import Model, clone_model
-from keras.layers import Input, merge, Conv1D, Dense, Dropout, BatchNormalization
+from keras.layers import Input, concatenate, Conv1D, Dense, Dropout, BatchNormalization
 from keras.optimizers import Adam
 from keras.initializers import RandomUniform
 import random
@@ -11,7 +11,7 @@ import datetime
 
 
 class DeepDPG(BaseAgent):
-    def __init__(self, state_shape, criticParams=CriticParams(), policyParams=PolicyParams(), OUParams=OUParams()):
+    def __init__(self, state_shape, criticParams, policyParams, OUParams):
         self.state_shape = state_shape
         self.criticParams = criticParams
         self.policyParams = policyParams
@@ -43,15 +43,15 @@ class DeepDPG(BaseAgent):
         self.target_policy_model.set_weights(self.policy_model.get_weights())
 
     def buildCriticNet(self, state_shape, params):
-        _state = Input(shape=(state_shape,))
-        _action = Input(shape=(1,))
+        _state = Input(shape=(None,state_shape))
+        _action = Input(shape=(None,1))
         norm = BatchNormalization()(_state)
         h1_conv = Conv1D(params.filters[0], params.kernelSize[0], activation='relu')(norm)
         h2_conv = Conv1D(params.filters[1], params.kernelSize[1], activation='relu')(h1_conv)
         h3_conv = Conv1D(params.filters[2], params.kernelSize[2], activation='relu')(h2_conv)
         h4_drop = Dropout(params.dropout)(h3_conv)
         h4_action_dense = Dense(1, activation='relu')(_action)
-        h5 = merge([h4_drop, h4_action_dense], mode='concat')
+        h5 = concatenate([h4_drop, h4_action_dense])
         h6 = Dense(params.denseUnits[0], activation='relu')(h5)
 
         uniform_init = RandomUniform(minval=params.init_minval, maxval=params.init_maxval)
@@ -66,7 +66,7 @@ class DeepDPG(BaseAgent):
         return model, _state, _action, _out
 
     def buildPolicyNet(self, state_shape, params):
-        _state = Input(shape=(state_shape,))
+        _state = Input(shape=(None,state_shape))
 
         norm = BatchNormalization()(_state)
         h1_conv = Conv1D(params.filters[0], params.kernelSize[0], activation='relu')(norm)
@@ -132,7 +132,7 @@ class DeepDPG(BaseAgent):
                 action = self.zeroFriendly(self.policy_model.predict(state) + self.noise(self.OUParams))
 
                 raw_new_state, reward, done, info = backtester.step(action)
-                new_state = featureBuilder.transform(raw_new_state)
+                new_state = featureBuilder.add(raw_new_state)
                 self.replayBuffer.add(state=state, action=action, reward=reward, next_state=new_state, done=done)
                 state = new_state
                 cumulative_reward *= reward
@@ -180,7 +180,7 @@ class DeepDPG(BaseAgent):
                     action = self.zeroFriendly(self.policy_model.predict(state))
 
                     raw_new_state, reward, test_done, info = backtester.step(action)
-                    new_state = featureBuilder.transform(raw_new_state)
+                    new_state = featureBuilder.add(raw_new_state)
 
                     state = new_state
 

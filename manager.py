@@ -1,10 +1,13 @@
 import backtest
+import featureBuild
+
 class Manager:
-    def __init__(self, data, agent, trader, train=True):
+    def __init__(self, data, agent, trader, train=True, queueSize=10):
         self.__data = data
         self.__agent = agent
         self.__trader = trader
         self.__train = train
+        self.__queueSize = queueSize
 
     def run(self):
         """
@@ -13,9 +16,11 @@ class Manager:
         """
 
         if self.__train:
-            self.__backtest = backtest.Backtest(cash=10000, data=self.__data, minBrokerFee=1.00, perShareFee=0.0075)
 
-            self.__agent.train()
+            self.__backtest = backtest.Backtest(cash=10000, data=self.__data, counter=self.__queueSize, minBrokerFee=1.00, perShareFee=0.0075)
+            self.__featureBuild = featureBuild.FeatureBuilder(data=self.__data, queueSize=self.__queueSize)
+
+            self.__agent.train(featureBuilder=self.__featureBuild, backtester=self.__backtest)
 
         else:
             stop_flag = False

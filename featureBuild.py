@@ -1,5 +1,4 @@
 import numpy as np
-import queue
 
 class FeatureBuilder:
 
@@ -9,15 +8,15 @@ class FeatureBuilder:
 
 
     def getFeatures(self):
-        stockFeatures = {}
-        stockFeat = StockFeatures()
-        stockName, stockQueue = self.__queues[stock].getAll()
-        stockFeat.avgPrice = stockQueue['avgPrice'].peekAll()
-        stockFeat.volume = stockQueue['volumeQueue'].peekAll()
-        stockFeat.buyPrice = stockQueue['buyPrice'].peekAll()
-        stockFeat.sellPrice = stockQueue['sellPrice'].peekAll()
+        stockQueue = self.__queues.getAll()
 
-        return stockFeat
+        stockFeat = stockQueue['Close']
+
+        return np.array(stockFeat)
+
+    def add(self, inputDict):
+        self.__queues.putAll(inputDict)
+        return self.getFeatures()
 
 
 class StockQueues:
@@ -25,25 +24,29 @@ class StockQueues:
     def __init__(self, data, queueSize):
 
         # Definitions for the queues of different data points that are tracked
-        avgPriceQueue = self.fillQueue('AvgPrice', data, queueSize)
-        volumeQueue = self.fillQueue('Volume', data, queueSize)
-        buyPriceQueue = self.fillQueue('BuyPrice', data, queueSize)
-        sellPriceQueue = self.fillQueue('SellPrice', data, queueSize)
+        openQueue = self.fillQueue('Open', data=data, queueSize=queueSize)
+        highQueue = self.fillQueue('High', data=data, queueSize=queueSize)
+        lowQueue = self.fillQueue('Low', data=data, queueSize=queueSize)
+        closeQueue = self.fillQueue('Close', data=data, queueSize=queueSize)
+        volumeQueue = self.fillQueue('Volume', data=data, queueSize=queueSize)
+
+
         self.__queueDict = {
-            'avgPrice': avgPriceQueue,
-            'volumeQueue': volumeQueue,
-            'buyPrice': buyPriceQueue,
-            'sellPrice': sellPriceQueue
+            'Open': openQueue,
+            'High': highQueue,
+            'Low': lowQueue,
+            'Close': closeQueue,
+            'Volume': volumeQueue
         }
 
-    def fillQueue(self, type, data, stockName, queueSize):
+    def fillQueue(self, dtype, data, queueSize):
         outQueue = PeekQueue(maxsize=queueSize)
         for i in range(0, queueSize):
-            outQueue.put(data[stockName][type][i])
+            outQueue.put(data[i][dtype])
         return outQueue
 
     def getAll(self):
-        return self.__name, self.__queueDict
+        return self.__queueDict
 
     def putAll(self, inputDict):
         # Check format
@@ -84,8 +87,3 @@ class FormatException(Exception):
 class QueueFullException(Exception):
     def __init__(self, message):
         self.message = message
-
-class StockFeatures:
-    # Data object, doesn't have getters and setters
-    def __init__(self, stockName):
-        self.name = stockName

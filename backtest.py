@@ -26,6 +26,7 @@ class Backtest(ExecuteInterface):
         self.__stockAmount = 0
         self.__data = data
         self.__counter = counter
+        self.__initCounter = counter
         self.__concQueue = Queue()
         self.__simple = simple
 
@@ -153,7 +154,7 @@ class Backtest(ExecuteInterface):
             return self.__data[self.__counter], reward, done, {}
 
     def reset(self):
-        self.__counter = 0
+        self.__counter = self.__initCounter
 
     def test(self, test_bool=False):
         self.__test = test_bool
@@ -162,5 +163,5 @@ class Backtest(ExecuteInterface):
             self.__counter = self.__train_len
             self.__counter_limit = len(self.__data)
         else:
-            self.__counter = 0
+            self.__counter = self.__initCounter
             self.__counter_limit = self.__train_len
