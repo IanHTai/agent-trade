@@ -1,10 +1,15 @@
+import csv
+
 class Data:
 
-    #TODO: Figure out calculating next time for update w.r.t interval
+    """
+    The data class is essentially structured as a list of dicts, complete with support for square bracket notation
 
-    def __init__(self, interval):
+    """
+
+    def __init__(self, interval, live=False):
         self.__interval = interval
-        pass
+        self.__live = live
 
     def checkMarket(self):
         """
@@ -21,3 +26,17 @@ class Data:
         # wait until relevant time
 
         return None
+
+    def liveData(self):
+        return self.__live
+
+    def loadData(self, filename):
+        with open(filename, 'r') as dataFile:
+            reader = csv.DictReader(dataFile, delimiter=',')
+            self.__data = [r for r in reader]
+
+    def __getitem__(self, item):
+        return self.__data[item]
+
+    def __len__(self):
+        return len(self.__data)
