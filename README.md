@@ -1,6 +1,6 @@
 # Agent-Trade
 
-This is a reinforcement-learning platform for stock trading, though it is currently still in progress.
+This is a reinforcement-learning platform for stock trading, and is currently still a work in progress.
 
 ### Agents that have been implemented so far:
 
