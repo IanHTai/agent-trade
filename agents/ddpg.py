@@ -1,6 +1,6 @@
 from .baseAgent import BaseAgent
 from keras.models import Model, clone_model
-from keras.layers import Input, concatenate, Conv1D, Dense, Dropout, BatchNormalization
+from keras.layers import Input, concatenate, Conv1D, Dense, Dropout, BatchNormalization, Flatten
 from keras.optimizers import Adam
 from keras.initializers import RandomUniform
 import random
@@ -8,22 +8,49 @@ import numpy as np
 import keras.backend as K
 import tensorflow as tf
 import datetime
+from random import choices
+from benchmark import Timer
+
+DO_PROFILE = True
+
+"""
+Modified DDPG to run N steps per batch of training
+This is to speed up training (better GPU memory usage with larger batches)
+while still maintaining adequate exploration and exposure to environment
+"""
 
 
 class DeepDPG(BaseAgent):
-    def __init__(self, state_shape, criticParams, policyParams, OUParams):
+    def __init__(self, state_shape, criticParams, policyParams, OUParams, episodes=6, batch_size=8192, tau=0.001, steps_per_batch=128):
         self.state_shape = state_shape
         self.criticParams = criticParams
         self.policyParams = policyParams
         self.current_noise = 0
         self.OUParams = OUParams
+        self.steps_per_batch = steps_per_batch
 
         """
         HYPERPARAM FOR # EPISODES, minibatch size
         """
-        self.episodes = 1000
-        self.batch_size = 64
-        self.tau = 0.001
+        self.episodes = episodes
+        self.batch_size = batch_size
+
+        # Adjust tau to match steps per batch
+        self.tau = tau * steps_per_batch
+
+        print("Batch Size:", self.batch_size)
+        print("Steps per batch:", self.steps_per_batch)
+
+
+        # """
+        # Disallowing GPU memory pre-allocation to see memory usage (for tuning batch size etc.)
+        # """
+        #
+        # config = tf.ConfigProto()
+        # config.gpu_options.allow_growth = True
+        #
+        # K.tensorflow_backend.set_session(tf.Session(config=config))
+
 
         self.replayBuffer = ReplayBuffer(max_size=1e6)
 
@@ -42,21 +69,22 @@ class DeepDPG(BaseAgent):
         self.target_policy_model = clone_model(self.policy_model)
         self.target_policy_model.set_weights(self.policy_model.get_weights())
 
+
     def buildCriticNet(self, state_shape, params):
-        _state = Input(shape=(None,state_shape))
-        _action = Input(shape=(None,1))
+        _state = Input(batch_shape=(None, state_shape, 1))
+        _action = Input(shape=(1,))
         norm = BatchNormalization()(_state)
         h1_conv = Conv1D(params.filters[0], params.kernelSize[0], activation='relu')(norm)
         h2_conv = Conv1D(params.filters[1], params.kernelSize[1], activation='relu')(h1_conv)
-        h3_conv = Conv1D(params.filters[2], params.kernelSize[2], activation='relu')(h2_conv)
-        h4_drop = Dropout(params.dropout)(h3_conv)
-        h4_action_dense = Dense(1, activation='relu')(_action)
-        h5 = concatenate([h4_drop, h4_action_dense])
+        h3 = Flatten()(h2_conv)
+        h4_drop = Dropout(params.dropout)(h3)
+        h5 = concatenate([h4_drop, _action])
         h6 = Dense(params.denseUnits[0], activation='relu')(h5)
+        h7 = Dense(params.denseUnits[1], activation='relu')(h6)
 
         uniform_init = RandomUniform(minval=params.init_minval, maxval=params.init_maxval)
 
-        _out = Dense(1, activation='tanh', kernel_initializer=uniform_init, bias_initializer=uniform_init)(h6)
+        _out = Dense(1, activation='tanh', kernel_initializer=uniform_init, bias_initializer=uniform_init)(h7)
 
         model = Model(inputs=[_state, _action], outputs=_out)
 
@@ -66,18 +94,19 @@ class DeepDPG(BaseAgent):
         return model, _state, _action, _out
 
     def buildPolicyNet(self, state_shape, params):
-        _state = Input(shape=(None,state_shape))
+        _state = Input(batch_shape=(None, state_shape, 1))
 
         norm = BatchNormalization()(_state)
         h1_conv = Conv1D(params.filters[0], params.kernelSize[0], activation='relu')(norm)
         h2_conv = Conv1D(params.filters[1], params.kernelSize[1], activation='relu')(h1_conv)
-        h3_conv = Conv1D(params.filters[2], params.kernelSize[2], activation='relu')(h2_conv)
-        h4_drop = Dropout(params.dropout)(h3_conv)
+        h3 = Flatten()(h2_conv)
+        h4_drop = Dropout(params.dropout)(h3)
         h5 = Dense(params.denseUnits[0], activation='relu')(h4_drop)
+        h6 = Dense(params.denseUnits[1], activation='relu')(h5)
 
         uniform_init = RandomUniform(minval=params.init_minval, maxval=params.init_maxval)
 
-        _out = Dense(1, activation='tanh', kernel_initializer=uniform_init, bias_initializer=uniform_init)(h5)
+        _out = Dense(1, activation='tanh', kernel_initializer=uniform_init, bias_initializer=uniform_init)(h6)
 
         model = Model(inputs=[_state], outputs=_out)
 
@@ -91,78 +120,135 @@ class DeepDPG(BaseAgent):
         return self.action_grads([states, actions])
 
     def trainActor(self, action_grads, params):
-        params_grad = tf.gradients(self.policyOut, self.policy_model.trainable_weights, -action_grads)
+        params_grad = tf.gradients(self.policyOut, self.policy_model.trainable_weights, np.negative(action_grads))
         zipped_grads = zip(params_grad, self.policy_model.trainable_weights)
         return tf.train.AdamOptimizer(learning_rate=params.learning_rate).apply_gradients(zipped_grads)
 
 
     def noise(self, params):
-        self.current_noise += params.theta * (params.mu + self.current_noise) + params.sigma * random.gauss(0, 1)
+        self.current_noise += params.theta * (params.mu - self.current_noise) + params.sigma * random.gauss(0, 1)
         return self.current_noise
 
     def runEpisode(self, backtester):
         raise NotImplementedError()
 
+
     def train(self, featureBuilder, backtester):
+        print("Time at start of training:", datetime.datetime.now())
+        timer = Timer('Training', profile=DO_PROFILE)
+
+
         #TODO : FEATUREBUILDER and add stock amount to state info
 
         train_cumulative_rewards = []
         test_cumulative_rewards = []
 
         # Populate replaybuffer with random actions first
-        for episode in range(0, 2):
-            self.current_noise = 0
-            state = featureBuilder.getFeatures()
-            while not featureBuilder.isEnd():
-                prev_value = backtester.value()
-                action = self.zeroFriendly(self.noise(self.OUParams))
-                new_state, reward, done, info = backtester.step(action)
-                self.replayBuffer.add(state=state, action=action, reward=reward, next_state=new_state)
-                state = new_state
+        # for episode in range(0, 1):
+        #     self.current_noise = 0
+        #     state = featureBuilder.getFeatures()
+        #     done = False
+        #     while not done:
+        #         prev_value = backtester.value()
+        #         action = self.zeroFriendly(self.noise(self.OUParams))
+        #         raw_new_state, reward, done, info = backtester.step(action)
+        #         new_state = featureBuilder.add(raw_new_state)
+        #         self.replayBuffer.add(state=state, action=action, reward=reward, next_state=new_state, done=done)
+        #         state = new_state
+        #     featureBuilder.reset()
+        #     backtester.reset()
+        # timer.checkpoint("Buffer Populated")
 
-
+        print("Replaybuffer populated with random actions")
 
         for episode in range(0, self.episodes):
             self.current_noise = 0
             state = featureBuilder.getFeatures()
             cumulative_reward = 1
             done = False
-            while not done:
-                prev_value = backtester.value()
-                action = self.zeroFriendly(self.policy_model.predict(state) + self.noise(self.OUParams))
+            counter_in_episode = 0
+            div_counter = 0
 
-                raw_new_state, reward, done, info = backtester.step(action)
-                new_state = featureBuilder.add(raw_new_state)
-                self.replayBuffer.add(state=state, action=action, reward=reward, next_state=new_state, done=done)
-                state = new_state
-                cumulative_reward *= reward
+            while not done:
+
+                timer.checkpoint("Start of steps per batch")
+
+                prev_value = backtester.value()
+                for step_per_batch in range(0, self.steps_per_batch):
+                    counter_in_episode += 1
+                    action = self.zeroFriendly(self.policy_model.predict(state)[0][0] + self.noise(self.OUParams))
+                    timer.checkpoint("Policy model predict")
+                    raw_new_state, reward, done, info = backtester.step(action)
+                    timer.checkpoint("Backtester step")
+                    new_state = featureBuilder.add(raw_new_state)
+                    timer.checkpoint("Featurebuilder add")
+                    self.replayBuffer.add(state=state, action=action, reward=reward, next_state=new_state, done=done)
+                    timer.checkpoint("Replaybuffer added to")
+                    state = new_state
+                    cumulative_reward *= (reward + 1)
 
                 samples = self.replayBuffer.getBatch(self.batch_size)
 
-                states = np.asarray(e[0] for e in samples)
-                actions = np.asarray(e[1] for e in samples)
-                rewards = np.asarray(e[2] for e in samples)
-                next_states = np.asarray(e[3] for e in samples)
-                dones = np.asarray(e[4] for e in samples)
-                y_i = np.asarray(e[2] for e in samples)
+                timer.checkpoint("Batch retrieve from replaybuffer")
 
-                for i in len(states):
-                    if dones[i]:
-                        y_i[i] = rewards[i]
-                    else:
-                        y_i[i] = rewards[i] + self.criticParams.discount * self.critic_target.predict(next_states, self.target_policy_model.predict(next_states))
-                        
+                states = np.array(list(e[0] for e in samples))
+                actions = np.array(list(e[1] for e in samples)).reshape(self.batch_size, 1)
+                rewards = np.array(list(e[2] for e in samples))
+                next_states = np.array(list(e[3] for e in samples))
+                dones = np.array(list(e[4] for e in samples))
+                y_i = np.array(list(0.0 for _ in samples))
+
+                timer.checkpoint("Batch separated into states, actions, etc.")
+
+                states = states.reshape(self.batch_size, self.state_shape, 1)
+                next_states = next_states.reshape(self.batch_size, self.state_shape, 1)
+
+                timer.checkpoint("States reshaped")
+
+                done_mask = dones == True
+                not_done_mask = dones == False
+
+                np.putmask(y_i, mask=done_mask, values=rewards[done_mask])
+
+                target_critic_predicted = self.critic_target.predict([next_states[not_done_mask], self.target_policy_model.predict(next_states[not_done_mask])])
+
+                not_done_values = rewards[not_done_mask] + self.criticParams.discount * target_critic_predicted[0]
+                np.putmask(y_i, mask=not_done_mask, values=not_done_values)
+
+
+                timer.checkpoint("y_i's updated with bellman equation")
+
+
                 self.critic_model.train_on_batch([states, actions], y_i)
 
-                self.trainActor(self.criticGrads(states, actions), params=self.policyParams)
+                timer.checkpoint("Critic model batch trained")
+
+                criticGrads = self.criticGrads(states, actions)
+
+                timer.checkpoint("Critic gradients computed")
+
+                self.trainActor(criticGrads, params=self.policyParams)
+
+                timer.checkpoint("Actor model batch trained")
+
                 self.updateTargets()
+
+                timer.checkpoint("Targets updated and episode step complete")
+
+                if not (counter_in_episode // 10000 == div_counter):
+                    div_counter = counter_in_episode // 10000
+                    print(datetime.datetime.now(), "Data Point", counter_in_episode)
+                    print("Cumulative reward in episode so far", cumulative_reward)
+                    print("Value so far", backtester.value())
+                    timer.printDict()
+                
 
             backtester.reset()
             print("Training Episode", episode, "Complete. Cumulative Reward:", cumulative_reward)
 
             train_cumulative_rewards.append(cumulative_reward)
 
-            if episode % 10 == 0:
+            if episode % 3 == 0:
                 """
                 Testing, without action space noise
                 """
@@ -184,7 +270,7 @@ class DeepDPG(BaseAgent):
 
                     state = new_state
 
-                    test_cumulative_reward *= reward
+                    test_cumulative_reward *= (reward + 1)
 
                 backtester.test(False)
                 backtester.reset()
@@ -193,6 +279,7 @@ class DeepDPG(BaseAgent):
 
                 test_cumulative_rewards.append(test_cumulative_reward)
 
+            featureBuilder.reset()
 
 
         # SAVE WEIGHTS
@@ -218,23 +305,33 @@ class DeepDPG(BaseAgent):
 
     def updateTargets(self):
         critic_target_weights = self.critic_target.get_weights()
+        critic_weights = self.critic_model.get_weights()
+
+        # Have to do the updates in loops because the format of the weights is a list of np arrays
+        # The np arrays can be directly multiplied by scalars but the list cannot
+
+        new_critic_target_weights = [self.tau * critic_weights[i] + (1 - self.tau) * critic_target_weights[i] for i in
+                                     range(0, len(critic_weights))]
+
+
+        self.critic_target.set_weights(new_critic_target_weights)
 
         actor_target_weights = self.target_policy_model.get_weights()
+        actor_weights = self.policy_model.get_weights()
 
-        critic_target_weights = self.tau * self.critic_model.get_weights() + (1 - self.tau) * critic_target_weights
-        actor_target_weights = self.tau * self.policy_model.get_weights() + (1 - self.tau) * actor_target_weights
+        new_actor_target_weights = [self.tau * actor_weights[i] + (1 - self.tau) * actor_target_weights[i] for i in
+                                    range(0, len(actor_weights))]
 
-        self.critic_target.set_weights(critic_target_weights)
-        self.target_policy_model.set_weights(actor_target_weights)
+        self.target_policy_model.set_weights(new_actor_target_weights)
 
     def zeroFriendly(self, action):
         """
-        Makes action space between [-1e-2, 1e-2] = 0, since continuous NN will likely not output perfect 0.0
+        Makes action space between [-5e-2, 5e-2] = 0, since continuous NN will likely not output perfect 0.0
         :param action: action output from NN
         :return: zero-friendly action
         """
 
-        if action <= 1e-2 and action >= -1e-2:
+        if action <= 5e-2 and action >= -5e-2:
             action = 0.0
         return action
 
@@ -243,7 +340,7 @@ class DeepDPG(BaseAgent):
 
 
 class CriticParams:
-    def __init__(self, filters=[32,32,32], kernel_size=[3,3,3], dense_units=[200,200], dropout=0.25):
+    def __init__(self, filters=[16,16,16], kernel_size=[3,3,3], dense_units=[100,100], dropout=0.25):
         self.filters = filters
         self.kernelSize = kernel_size
         self.denseUnits = dense_units
@@ -256,7 +353,7 @@ class CriticParams:
         self.init_maxval = 3e-4
 
 class PolicyParams:
-    def __init__(self, filters=[32,32,32], kernel_size=[3,3,3], dense_units=[200,200], dropout=0.25):
+    def __init__(self, filters=[16,16,16], kernel_size=[3,3,3], dense_units=[100,100], dropout=0.25):
         self.filters = filters
         self.kernelSize = kernel_size
         self.denseUnits = dense_units
@@ -285,4 +382,6 @@ class ReplayBuffer:
         return self.replayList[random.randint(0, len(self.replayList) - 1)]
 
     def getBatch(self, batchSize):
-        return np.random.choice(self.replayList, size=batchSize, replace=True)
+        return choices(self.replayList, k=batchSize)
+
+

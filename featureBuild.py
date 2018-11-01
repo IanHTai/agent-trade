@@ -5,6 +5,7 @@ class FeatureBuilder:
     def __init__(self, data, queueSize=10):
         self.__data = data
         self.__queues = StockQueues(data, queueSize)
+        self.__queueSize = queueSize
 
 
     def getFeatures(self):
@@ -12,12 +13,14 @@ class FeatureBuilder:
 
         stockFeat = stockQueue['Close']
 
-        return np.array(stockFeat)
+        return np.array(stockFeat.peekAll()).reshape(1, self.__queueSize, 1)
 
     def add(self, inputDict):
         self.__queues.putAll(inputDict)
         return self.getFeatures()
 
+    def reset(self):
+        self.__queues = StockQueues(self.__data, self.__queueSize)
 
 class StockQueues:
 
@@ -49,10 +52,7 @@ class StockQueues:
         return self.__queueDict
 
     def putAll(self, inputDict):
-        # Check format
-        if not sorted(self.__queueDict.keys()) == sorted(inputDict.keys()):
-            raise FormatException("Feature Build Stockqueue Update Format Clash -- Missing or Extra Keys")
-        for key in inputDict.keys():
+        for key in self.__queueDict.keys():
             self.__queueDict[key].get()
             self.__queueDict[key].put(inputDict[key])
 
@@ -79,6 +79,7 @@ class PeekQueue:
 
     def peek(self, index):
         return self.__list[index]
+
 
 class FormatException(Exception):
     def __init__(self, message):

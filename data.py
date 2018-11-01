@@ -32,7 +32,7 @@ class Data:
 
     def loadData(self, filename):
         with open(filename, 'r') as dataFile:
-            reader = csv.DictReader(dataFile, delimiter=',')
+            reader = TypedDictReader(dataFile, delimiter=',', fieldtypes=[str, str, float, float, float, float, int])
             self.__data = [r for r in reader]
 
     def __getitem__(self, item):
@@ -40,3 +40,22 @@ class Data:
 
     def __len__(self):
         return len(self.__data)
+
+
+class TypedDictReader(csv.DictReader):
+    def __init__(self, f, fieldnames=None, restkey=None, restval=None, dialect="excel", fieldtypes=None, *args, **kwds):
+
+        csv.DictReader.__init__(self, f, fieldnames, restkey, restval, dialect, *args, **kwds)
+        self._fieldtypes = fieldtypes
+
+    def __next__(self):
+        d = csv.DictReader.__next__(self)
+        if len(self._fieldtypes) >= len(d) :
+            # extract the values in the same order as the csv header
+            ivalues = map(d.get, self._fieldnames)
+            # apply type conversions
+            iconverted = (x(y) for (x,y) in zip(self._fieldtypes, ivalues))
+            # pass the field names and the converted values to the dict constructor
+            d = dict(zip(self._fieldnames, iconverted))
+
+        return d

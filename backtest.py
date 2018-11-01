@@ -54,7 +54,7 @@ class Backtest(ExecuteInterface):
             if random.random() < self.FAILURE_CHANCE:
                 return False
             else:
-                price = self.__data.get('avgPrice', self.__counter)
+                price = self.__data[self.__counter]['Close']
                 if amount * price + max(self.__minBrokerFee, self.__perShareFee * amount) > self.__cash:
                     amount = math.floor((self.__cash - max(self.__minBrokerFee, self.__perShareFee * amount))/price)
                 self.__cash -= max(self.__minBrokerFee, self.__perShareFee * amount)
@@ -102,7 +102,7 @@ class Backtest(ExecuteInterface):
             return False
         else:
             self.__cash -= max(self.__minBrokerFee, self.__perShareFee * amount)
-            price = self.__data.get('avgPrice', self.__counter)
+            price = self.__data[self.__counter]['Close']
             self.__counter += 1
             if not amount == 0:
                 if not self.__simple:
@@ -118,18 +118,19 @@ class Backtest(ExecuteInterface):
     def value(self):
         cashDelta = 0
         amountDelta = 0
+        qCounter = 0
         while not self.__concQueue.empty():
-            [amount, cash] = self.__concQueue.get()
+            [amount, cash] = self.__concQueue.queue.index(qCounter)
             amountDelta += amount
             cashDelta += cash
         self.__cash += cashDelta
         self.__stockAmount += amountDelta
-        return self.__cash + self.__stockAmount
+        return self.__cash + self.__stockAmount*self.__data[self.__counter]['Close']
 
     def step(self, actionValue):
         old_value = self.value()
         if actionValue > 0:
-            success = self.buy(math.ceil(actionValue*math.floor(self.__cash/self.__data.get('avgPrice', self.__counter))))
+            success = self.buy(math.ceil(actionValue*math.floor(self.__cash/self.__data[self.__counter]['Close'])))
             reward = self.value()/float(old_value) - 1
             if self.__counter >= self.__counter_limit - 1:
                 done = True
@@ -137,6 +138,7 @@ class Backtest(ExecuteInterface):
                 done = False
             return self.__data[self.__counter], reward, done, {}
         elif actionValue < 0:
+            actionValue = -actionValue
             success = self.sell(math.ceil(actionValue*self.__stockAmount))
             reward = self.value() / float(old_value) - 1
             if self.__counter >= self.__counter_limit - 1:
@@ -165,3 +167,9 @@ class Backtest(ExecuteInterface):
         else:
             self.__counter = self.__initCounter
             self.__counter_limit = self.__train_len
+
+    def cash(self):
+        return self.__cash
+
+    def stockAmount(self):
+        return self.__stockAmount
