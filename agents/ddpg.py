@@ -240,7 +240,7 @@ class DeepDPG(BaseAgent):
                     print(datetime.datetime.now(), "Data Point", counter_in_episode)
                     print("Cumulative reward in episode so far", cumulative_reward)
                     print("Value so far", backtester.value())
-                    timer.printDict()
+                    self.timer.printDict()
                 
 
             backtester.reset()
