@@ -33,7 +33,6 @@ class StockQueues:
         closeQueue = self.fillQueue('Close', data=data, queueSize=queueSize)
         volumeQueue = self.fillQueue('Volume', data=data, queueSize=queueSize)
 
-
         self.__queueDict = {
             'Open': openQueue,
             'High': highQueue,

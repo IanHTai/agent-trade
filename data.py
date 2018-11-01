@@ -19,8 +19,8 @@ class Data:
         return True
     def new(self):
         """
-        Get update from data source at relevant time intervals
-        :return: Array of data info
+        Get update from resources source at relevant time intervals
+        :return: Array of resources info
         """
 
         # wait until relevant time

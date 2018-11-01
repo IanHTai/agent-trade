@@ -15,13 +15,14 @@ class Backtest(ExecuteInterface):
     def __init__(self, cash, data, minBrokerFee, perShareFee, counter=0, trainSplit=0.8, simple=True):
         """
         :param cash: starting cash
-        :param data: stock data
+        :param data: stock resources
         :param minBrokerFee:
         :param perShareFee:
         :param counter: current index pointer in dataset
         :param trainSplit: train/test split ratio
         :param simple: False: use slipping/delay simulator
         """
+
         self.__cash = cash
         self.__stockAmount = 0
         self.__data = data
@@ -58,7 +59,6 @@ class Backtest(ExecuteInterface):
                 if amount * price + max(self.__minBrokerFee, self.__perShareFee * amount) > self.__cash:
                     amount = math.floor((self.__cash - max(self.__minBrokerFee, self.__perShareFee * amount))/price)
                 self.__cash -= max(self.__minBrokerFee, self.__perShareFee * amount)
-                # TODO: figure out data structure
                 self.__counter += 1
                 if not amount == 0:
                     if not self.__simple:
