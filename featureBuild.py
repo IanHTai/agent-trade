@@ -1,62 +1,57 @@
 import numpy as np
-import queue
 
 class FeatureBuilder:
 
-    def __init__(self, data, listOfStocks, queueSize=10):
+    def __init__(self, data, queueSize=10):
         self.__data = data
-        self.__queues = {}
-        self.__stockNames = listOfStocks
-        for stock in listOfStocks:
-            self.__queues[stock] = StockQueues(data, stock, queueSize)
+        self.__queues = StockQueues(data, queueSize)
+        self.__queueSize = queueSize
 
 
     def getFeatures(self):
-        stockFeatures = {}
-        for stock in self.__stockNames:
-            stockFeat = StockFeatures(stock)
-            stockName, stockQueue = self.__queues[stock].getAll()
-            assert stock == stockName
-            stockFeat.avgPrice = stockQueue['avgPrice'].peekAll()
-            stockFeat.volume = stockQueue['volumeQueue'].peekAll()
-            stockFeat.buyPrice = stockQueue['buyPrice'].peekAll()
-            stockFeat.sellPrice = stockQueue['sellPrice'].peekAll()
+        stockQueue = self.__queues.getAll()
 
-            stockFeatures[stock] = stockFeat
-        return stockFeatures
+        stockFeat = stockQueue['Close']
 
+        return np.array(stockFeat.peekAll()).reshape(1, self.__queueSize, 1)
+
+    def add(self, inputDict):
+        self.__queues.putAll(inputDict)
+        return self.getFeatures()
+
+    def reset(self):
+        self.__queues = StockQueues(self.__data, self.__queueSize)
 
 class StockQueues:
 
-    def __init__(self, data, stockName, queueSize):
-        self.__name = stockName
+    def __init__(self, data, queueSize):
 
-        # Definitions for the queues of different resources points that are tracked
-        avgPriceQueue = self.fillQueue('AvgPrice', data, stockName, queueSize)
-        volumeQueue = self.fillQueue('Volume', data, stockName, queueSize)
-        buyPriceQueue = self.fillQueue('BuyPrice', data, stockName, queueSize)
-        sellPriceQueue = self.fillQueue('SellPrice', data, stockName, queueSize)
+        # Definitions for the queues of different data points that are tracked
+        openQueue = self.fillQueue('Open', data=data, queueSize=queueSize)
+        highQueue = self.fillQueue('High', data=data, queueSize=queueSize)
+        lowQueue = self.fillQueue('Low', data=data, queueSize=queueSize)
+        closeQueue = self.fillQueue('Close', data=data, queueSize=queueSize)
+        volumeQueue = self.fillQueue('Volume', data=data, queueSize=queueSize)
+
         self.__queueDict = {
-            'avgPrice': avgPriceQueue,
-            'volumeQueue': volumeQueue,
-            'buyPrice': buyPriceQueue,
-            'sellPrice': sellPriceQueue
+            'Open': openQueue,
+            'High': highQueue,
+            'Low': lowQueue,
+            'Close': closeQueue,
+            'Volume': volumeQueue
         }
 
-    def fillQueue(self, type, data, stockName, queueSize):
+    def fillQueue(self, dtype, data, queueSize):
         outQueue = PeekQueue(maxsize=queueSize)
         for i in range(0, queueSize):
-            outQueue.put(data[stockName][type][i])
+            outQueue.put(data[i][dtype])
         return outQueue
 
     def getAll(self):
-        return self.__name, self.__queueDict
+        return self.__queueDict
 
     def putAll(self, inputDict):
-        # Check format
-        if not sorted(self.__queueDict.keys()) == sorted(inputDict.keys()):
-            raise FormatException("Feature Build Stockqueue Update Format Clash -- Missing or Extra Keys")
-        for key in inputDict.keys():
+        for key in self.__queueDict.keys():
             self.__queueDict[key].get()
             self.__queueDict[key].put(inputDict[key])
 
@@ -84,6 +79,7 @@ class PeekQueue:
     def peek(self, index):
         return self.__list[index]
 
+
 class FormatException(Exception):
     def __init__(self, message):
         self.message = message
@@ -91,8 +87,3 @@ class FormatException(Exception):
 class QueueFullException(Exception):
     def __init__(self, message):
         self.message = message
-
-class StockFeatures:
-    # Data object, doesn't have getters and setters
-    def __init__(self, stockName):
-        self.name = stockName

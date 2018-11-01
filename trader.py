@@ -2,7 +2,8 @@ import getpass
 class Trader:
     API_NAME = None
     def __init__(self):
-        self.login()
+        pass
+        #self.login()
 
     def login(self):
         """

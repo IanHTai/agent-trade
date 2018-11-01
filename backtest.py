@@ -3,6 +3,7 @@ from threading import Thread
 from queue import Queue
 import random
 import time
+import math
 
 class Backtest(ExecuteInterface):
     FAILURE_CHANCE = 0.001
@@ -11,20 +12,29 @@ class Backtest(ExecuteInterface):
     """
     TODO: Do logic/control for test/train split  in another class (maybe manager?)
     """
-    def __init__(self, cash, data, minBrokerFee, perShareFee, counter=0):
+    def __init__(self, cash, data, minBrokerFee, perShareFee, counter=0, trainSplit=0.8, simple=True):
         """
         :param cash: starting cash
         :param data: stock resources
         :param minBrokerFee:
         :param perShareFee:
-        :param train: train/test
-        :param split: index of start of test set in resources
+        :param counter: current index pointer in dataset
+        :param trainSplit: train/test split ratio
+        :param simple: False: use slipping/delay simulator
         """
+
         self.__cash = cash
         self.__stockAmount = 0
         self.__data = data
         self.__counter = counter
+        self.__initCounter = counter
         self.__concQueue = Queue()
+        self.__simple = simple
+
+        self.__train_len = trainSplit*len(data)
+        self.__test = False
+
+        self.__counter_limit = self.__train_len
 
         # Set default amount of money spent on fees on every trade
         self.__minBrokerFee = minBrokerFee
@@ -41,16 +51,21 @@ class Backtest(ExecuteInterface):
             self.__counter += 1
             return False
         else:
-
             # Random chance of failure
             if random.random() < self.FAILURE_CHANCE:
                 return False
             else:
+                price = self.__data[self.__counter]['Close']
+                if amount * price + max(self.__minBrokerFee, self.__perShareFee * amount) > self.__cash:
+                    amount = math.floor((self.__cash - max(self.__minBrokerFee, self.__perShareFee * amount))/price)
                 self.__cash -= max(self.__minBrokerFee, self.__perShareFee * amount)
-                # TODO: figure out resources structure
-                price = self.__data.get('avgPrice', self.__counter)
                 self.__counter += 1
-                Thread(target=self.buyOrder, args=(price, amount)).start()
+                if not amount == 0:
+                    if not self.__simple:
+                        Thread(target=self.orderSim, args=(True, price, amount)).start()
+                    else:
+                        self.__cash -= amount * price
+                        self.__stockAmount += amount
                 return True
 
     def orderSim(self, buy, price, amount):
@@ -80,14 +95,22 @@ class Backtest(ExecuteInterface):
             self.__concQueue.put([-amount, price*amount])
 
     def sell(self, amount):
+        if amount > self.__stockAmount:
+            amount == self.__stockAmount
         if self.__cash < max(self.__minBrokerFee, self.__perShareFee * amount):
             self.__counter += 1
             return False
         else:
             self.__cash -= max(self.__minBrokerFee, self.__perShareFee * amount)
-
+            price = self.__data[self.__counter]['Close']
             self.__counter += 1
-
+            if not amount == 0:
+                if not self.__simple:
+                    Thread(target=self.orderSim, args=(False, price, amount)).start()
+                else:
+                    self.__cash += price * amount
+                    self.__stockAmount -= amount
+            return True
 
     def doNothing(self):
         self.__counter += 1
@@ -95,10 +118,58 @@ class Backtest(ExecuteInterface):
     def value(self):
         cashDelta = 0
         amountDelta = 0
+        qCounter = 0
         while not self.__concQueue.empty():
-            [amount, cash] = self.__concQueue.get()
+            [amount, cash] = self.__concQueue.queue.index(qCounter)
             amountDelta += amount
             cashDelta += cash
         self.__cash += cashDelta
         self.__stockAmount += amountDelta
-        return self.__cash + self.__stockAmount
+        return self.__cash + self.__stockAmount*self.__data[self.__counter]['Close']
+
+    def step(self, actionValue):
+        old_value = self.value()
+        if actionValue > 0:
+            success = self.buy(math.ceil(actionValue*math.floor(self.__cash/self.__data[self.__counter]['Close'])))
+            reward = self.value()/float(old_value) - 1
+            if self.__counter >= self.__counter_limit - 1:
+                done = True
+            else:
+                done = False
+            return self.__data[self.__counter], reward, done, {}
+        elif actionValue < 0:
+            actionValue = -actionValue
+            success = self.sell(math.ceil(actionValue*self.__stockAmount))
+            reward = self.value() / float(old_value) - 1
+            if self.__counter >= self.__counter_limit - 1:
+                done = True
+            else:
+                done = False
+            return self.__data[self.__counter], reward, done, {}
+        else:
+            success = self.doNothing()
+            reward = self.value() / float(old_value) - 1
+            if self.__counter >= self.__counter_limit - 1:
+                done = True
+            else:
+                done = False
+            return self.__data[self.__counter], reward, done, {}
+
+    def reset(self):
+        self.__counter = self.__initCounter
+
+    def test(self, test_bool=False):
+        self.__test = test_bool
+
+        if test_bool:
+            self.__counter = self.__train_len
+            self.__counter_limit = len(self.__data)
+        else:
+            self.__counter = self.__initCounter
+            self.__counter_limit = self.__train_len
+
+    def cash(self):
+        return self.__cash
+
+    def stockAmount(self):
+        return self.__stockAmount

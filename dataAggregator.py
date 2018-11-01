@@ -50,11 +50,9 @@ class DataAggregator:
         print("Collecting Data for SPY", DSTDateTime(timezone=self.timezone_string).datetime)
         while True:
             seconds = DSTDateTime(timezone=self.timezone_string).datetime.second
-            if not self.checkMarket():
-                sleepTime = (seconds - DSTDateTime(timezone=self.timezone_string).datetime.second) % 60
-                print("Sleeping until", seconds)
-                time.sleep(sleepTime)
-                continue
+            while not self.checkMarket():
+                print("AlphaVantage hasn't updated yet, sleeping for 2 seconds")
+                time.sleep(2)
             minute = DSTDateTime(timezone=self.timezone_string).datetime.minute
             now = DSTDateTime(timezone=self.timezone_string).datetime
             while True:
@@ -79,7 +77,7 @@ class DataAggregator:
                 # The boundaries 8 am and 5 pm are chosen to mitigate chances of bugs regarding Daylight Savings Time
                 # At the cost of 120 additional requests per work day
                 print("Market's closed", DSTDateTime(timezone=self.timezone_string).datetime)
-                sleepTime = (60 - DSTDateTime(timezone=self.timezone_string).datetime.second)%60
+                sleepTime = (60 - DSTDateTime(timezone=self.timezone_string).datetime.second)%60 + 10
                 time.sleep(sleepTime)
                 sleepTime = ((60 - DSTDateTime(timezone=self.timezone_string).datetime.minute)%60) * 60
                 time.sleep(sleepTime)
@@ -94,15 +92,18 @@ class DataAggregator:
                     print("Weekend's over, time to work again", DSTDateTime(timezone=self.timezone_string).datetime)
             elif minute > DSTDateTime(timezone=self.timezone_string).datetime.minute and seconds > DSTDateTime(timezone=self.timezone_string).datetime.second:
                 # Lagging behind (took > 1 minute to get data/write), don't sleep
+                print("Lagging behind", DSTDateTime(timezone=self.timezone_string).datetime.second)
                 continue
             else:
                 if DSTDateTime(timezone=self.timezone_string).datetime.second > 30:
                     # If we are starting to lag behind and the second we get updates is > 30 past the minute, we reset the
-                    # seconds past the minute to 15
-                    sleepTime = (60 - DSTDateTime(timezone=self.timezone_string).datetime.second) % 60 + 15
+                    # seconds past the minute to 10
+                    print("we are starting to lag behind and the second we get updates is > 30 past the minute")
+                    sleepTime = (60 - DSTDateTime(timezone=self.timezone_string).datetime.second) % 60 + 10
                     time.sleep(sleepTime)
                 else:
                     # Sleep until the pre-set seconds mark from previous iteration
+                    print("Normal, sleep until", seconds)
                     sleepTime = (seconds - DSTDateTime(timezone=self.timezone_string).datetime.second) % 60
                     time.sleep(sleepTime)
 
