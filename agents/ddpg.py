@@ -135,7 +135,7 @@ class DeepDPG(BaseAgent):
 
     def train(self, featureBuilder, backtester):
         print("Time at start of training:", datetime.datetime.now())
-        timer = Timer('Training', profile=DO_PROFILE)
+        self.timer = Timer('Training', profile=DO_PROFILE)
 
 
         #TODO : FEATUREBUILDER and add stock amount to state info
@@ -171,25 +171,25 @@ class DeepDPG(BaseAgent):
 
             while not done:
 
-                timer.checkpoint("Start of steps per batch")
+                self.timer.checkpoint("Start of steps per batch")
 
                 prev_value = backtester.value()
                 for step_per_batch in range(0, self.steps_per_batch):
                     counter_in_episode += 1
                     action = self.zeroFriendly(self.policy_model.predict(state)[0][0] + self.noise(self.OUParams))
-                    timer.checkpoint("Policy model predict")
+                    self.timer.checkpoint("Policy model predict")
                     raw_new_state, reward, done, info = backtester.step(action)
-                    timer.checkpoint("Backtester step")
+                    self.timer.checkpoint("Backtester step")
                     new_state = featureBuilder.add(raw_new_state)
-                    timer.checkpoint("Featurebuilder add")
+                    self.timer.checkpoint("Featurebuilder add")
                     self.replayBuffer.add(state=state, action=action, reward=reward, next_state=new_state, done=done)
-                    timer.checkpoint("Replaybuffer added to")
+                    self.timer.checkpoint("Replaybuffer added to")
                     state = new_state
                     cumulative_reward *= (reward + 1)
 
                 samples = self.replayBuffer.getBatch(self.batch_size)
 
-                timer.checkpoint("Batch retrieve from replaybuffer")
+                self.timer.checkpoint("Batch retrieve from replaybuffer")
 
                 states = np.array(list(e[0] for e in samples))
                 actions = np.array(list(e[1] for e in samples)).reshape(self.batch_size, 1)
@@ -198,7 +198,7 @@ class DeepDPG(BaseAgent):
                 dones = np.array(list(e[4] for e in samples))
                 y_i = np.array(list(0.0 for _ in samples))
 
-                timer.checkpoint("Batch separated into states, actions, etc.")
+                self.timer.checkpoint("Batch separated into states, actions, etc.")
 
                 states = states.reshape(self.batch_size, self.state_shape, 1)
                 next_states = next_states.reshape(self.batch_size, self.state_shape, 1)
@@ -216,24 +216,24 @@ class DeepDPG(BaseAgent):
                 np.putmask(y_i, mask=not_done_mask, values=not_done_values)
 
 
-                timer.checkpoint("y_i's updated with bellman equation")
+                self.timer.checkpoint("y_i's updated with bellman equation")
 
 
                 self.critic_model.train_on_batch([states, actions], y_i)
 
-                timer.checkpoint("Critic model batch trained")
+                self.timer.checkpoint("Critic model batch trained")
 
                 criticGrads = self.criticGrads(states, actions)
 
-                timer.checkpoint("Critic gradients computed")
+                self.timer.checkpoint("Critic gradients computed")
 
                 self.trainActor(criticGrads, params=self.policyParams)
 
-                timer.checkpoint("Actor model batch trained")
+                self.timer.checkpoint("Actor model batch trained")
 
                 self.updateTargets()
 
-                timer.checkpoint("Targets updated and episode step complete")
+                self.timer.checkpoint("Targets updated and episode step complete")
 
                 if not (counter_in_episode // 10000 == div_counter):
                     div_counter = counter_in_episode // 10000
@@ -307,22 +307,30 @@ class DeepDPG(BaseAgent):
         critic_target_weights = self.critic_target.get_weights()
         critic_weights = self.critic_model.get_weights()
 
+        self.timer.checkpoint("Critic target weights gotten")
         # Have to do the updates in loops because the format of the weights is a list of np arrays
         # The np arrays can be directly multiplied by scalars but the list cannot
 
         new_critic_target_weights = [self.tau * critic_weights[i] + (1 - self.tau) * critic_target_weights[i] for i in
                                      range(0, len(critic_weights))]
-
+        self.timer.checkpoint("New critic target weights calculated")
 
         self.critic_target.set_weights(new_critic_target_weights)
+
+        self.timer.checkpoint("Critic target weights set")
 
         actor_target_weights = self.target_policy_model.get_weights()
         actor_weights = self.policy_model.get_weights()
 
+        self.timer.checkpoint("Actor target weights gotten")
         new_actor_target_weights = [self.tau * actor_weights[i] + (1 - self.tau) * actor_target_weights[i] for i in
                                     range(0, len(actor_weights))]
 
+        self.timer.checkpoint("New actor target weights calculated")
+
         self.target_policy_model.set_weights(new_actor_target_weights)
+
+        self.timer.checkpoint("Actor target weights set")
 
     def zeroFriendly(self, action):
         """
