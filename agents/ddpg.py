@@ -157,7 +157,7 @@ class DeepDPG(BaseAgent):
         #         state = new_state
         #     featureBuilder.reset()
         #     backtester.reset()
-        # timer.checkpoint("Buffer Populated")
+        # self.timer.checkpoint("Buffer Populated")
 
         print("Replaybuffer populated with random actions")
 
@@ -203,7 +203,7 @@ class DeepDPG(BaseAgent):
                 states = states.reshape(self.batch_size, self.state_shape, 1)
                 next_states = next_states.reshape(self.batch_size, self.state_shape, 1)
 
-                timer.checkpoint("States reshaped")
+                self.timer.checkpoint("States reshaped")
 
                 done_mask = dones == True
                 not_done_mask = dones == False
