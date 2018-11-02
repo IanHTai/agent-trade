@@ -12,7 +12,7 @@ class Backtest(ExecuteInterface):
     """
     TODO: Do logic/control for test/train split  in another class (maybe manager?)
     """
-    def __init__(self, cash, data, minBrokerFee, perShareFee, counter=0, trainSplit=0.8, simple=True):
+    def __init__(self, cash, data, minBrokerFee, perShareFee, counter=0, trainSplit=0.8, simple=True, stateObj=True):
         """
         :param cash: starting cash
         :param data: stock resources
@@ -39,6 +39,8 @@ class Backtest(ExecuteInterface):
         # Set default amount of money spent on fees on every trade
         self.__minBrokerFee = minBrokerFee
         self.__perShareFee = perShareFee
+
+        self.__stateObj = stateObj
 
     def buy(self, amount):
         """
@@ -131,29 +133,29 @@ class Backtest(ExecuteInterface):
         old_value = self.value()
         if actionValue > 0:
             success = self.buy(math.ceil(actionValue*math.floor(self.__cash/self.__data[self.__counter]['Close'])))
-            reward = self.value()/float(old_value) - 1
-            if self.__counter >= self.__counter_limit - 1:
-                done = True
-            else:
-                done = False
-            return self.__data[self.__counter], reward, done, {}
         elif actionValue < 0:
             actionValue = -actionValue
             success = self.sell(math.ceil(actionValue*self.__stockAmount))
-            reward = self.value() / float(old_value) - 1
-            if self.__counter >= self.__counter_limit - 1:
-                done = True
-            else:
-                done = False
-            return self.__data[self.__counter], reward, done, {}
         else:
             success = self.doNothing()
-            reward = self.value() / float(old_value) - 1
-            if self.__counter >= self.__counter_limit - 1:
-                done = True
-            else:
-                done = False
-            return self.__data[self.__counter], reward, done, {}
+
+        reward = self.value() / float(old_value) - 1
+
+        if self.__counter >= self.__counter_limit - 1:
+            done = True
+        else:
+            done = False
+
+        state = self.returnState(self.__data[self.__counter], self.__cash, self.__stockAmount, self.value())
+
+        return state, reward, done, {}
+
+
+    def returnState(self, inputDict, cash, amount, value):
+        if self.__stateObj:
+            return State(inputDict, cash, amount, value)
+        else:
+            return inputDict
 
     def reset(self):
         self.__counter = self.__initCounter
@@ -173,3 +175,10 @@ class Backtest(ExecuteInterface):
 
     def stockAmount(self):
         return self.__stockAmount
+
+class State:
+    def __init__(self, inputDict, cash, amount, value):
+        self.inputDict = inputDict
+        self.cash = cash
+        self.amount = amount
+        self.value = value

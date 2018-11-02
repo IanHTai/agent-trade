@@ -10,6 +10,7 @@ import tensorflow as tf
 import datetime
 from random import choices
 from benchmark import Timer
+from backtest import State
 
 DO_PROFILE = True
 
@@ -21,8 +22,9 @@ while still maintaining adequate exploration and exposure to environment
 
 
 class DeepDPG(BaseAgent):
-    def __init__(self, state_shape, criticParams, policyParams, OUParams, episodes=6, batch_size=8192, tau=0.001, steps_per_batch=128):
+    def __init__(self, state_shape, normal_state_shape, criticParams, policyParams, OUParams, episodes=6, batch_size=8192, tau=0.001, steps_per_batch=128):
         self.state_shape = state_shape
+        self.normal_state_shape = normal_state_shape
         self.criticParams = criticParams
         self.policyParams = policyParams
         self.current_noise = 0
@@ -54,14 +56,14 @@ class DeepDPG(BaseAgent):
 
         self.replayBuffer = ReplayBuffer(max_size=1e6)
 
-        self.critic_model, self.criticS, self.criticA, self.criticOut = self.buildCriticNet(state_shape, criticParams)
+        self.critic_model, self.criticS, self.criticN_S, self.criticA, self.criticOut = self.buildCriticNet(state_shape, normal_state_shape, criticParams)
 
 
         # Improvised from https://github.com/germain-hug/Deep-RL-Keras/blob/master/DDPG/critic.py
         self.action_grads = K.function([self.criticS, self.criticA],
                                        K.gradients(self.criticOut, [self.criticA]))
 
-        self.policy_model, self.policyS, self.policyOut = self.buildPolicyNet(state_shape, policyParams)
+        self.policy_model, self.policyS, self.policyN_S, self.policyOut = self.buildPolicyNet(state_shape, normal_state_shape, policyParams)
 
         self.critic_target = clone_model(self.critic_model)
         self.critic_target.set_weights(self.critic_model.get_weights())
@@ -70,14 +72,18 @@ class DeepDPG(BaseAgent):
         self.target_policy_model.set_weights(self.policy_model.get_weights())
 
 
-    def buildCriticNet(self, state_shape, params):
-        _state = Input(batch_shape=(None, state_shape, 1))
+    def buildCriticNet(self, state_shape, normal_state_shape, params):
+        _conv_state = Input(batch_shape=(None, state_shape, 1))
+        _normal_state = Input(shape=(normal_state_shape,))
         _action = Input(shape=(1,))
-        norm = BatchNormalization()(_state)
+
+        norm = BatchNormalization()(_conv_state)
         h1_conv = Conv1D(params.filters[0], params.kernelSize[0], activation='relu')(norm)
         h2_conv = Conv1D(params.filters[1], params.kernelSize[1], activation='relu')(h1_conv)
         h3 = Flatten()(h2_conv)
-        h4_drop = Dropout(params.dropout)(h3)
+        norm_norm_state = BatchNormalization()(_normal_state)
+        h3_5 = concatenate([h3, norm_norm_state])
+        h4_drop = Dropout(params.dropout)(h3_5)
         h5 = concatenate([h4_drop, _action])
         h6 = Dense(params.denseUnits[0], activation='relu')(h5)
         h7 = Dense(params.denseUnits[1], activation='relu')(h6)
@@ -86,21 +92,24 @@ class DeepDPG(BaseAgent):
 
         _out = Dense(1, activation='tanh', kernel_initializer=uniform_init, bias_initializer=uniform_init)(h7)
 
-        model = Model(inputs=[_state, _action], outputs=_out)
+        model = Model(inputs=[_conv_state, _normal_state, _action], outputs=_out)
 
         adam = Adam(lr=params.learning_rate, decay=params.weight_decay)
         model.compile(loss='mse', optimizer=adam)
 
-        return model, _state, _action, _out
+        return model, _conv_state, _normal_state, _action, _out
 
-    def buildPolicyNet(self, state_shape, params):
+    def buildPolicyNet(self, state_shape, normal_state_shape, params):
         _state = Input(batch_shape=(None, state_shape, 1))
+        _normal_state = Input(shape=(normal_state_shape,))
 
         norm = BatchNormalization()(_state)
         h1_conv = Conv1D(params.filters[0], params.kernelSize[0], activation='relu')(norm)
         h2_conv = Conv1D(params.filters[1], params.kernelSize[1], activation='relu')(h1_conv)
         h3 = Flatten()(h2_conv)
-        h4_drop = Dropout(params.dropout)(h3)
+        norm_norm_state = BatchNormalization()(_normal_state)
+        h3_5 = concatenate([h3, norm_norm_state])
+        h4_drop = Dropout(params.dropout)(h3_5)
         h5 = Dense(params.denseUnits[0], activation='relu')(h4_drop)
         h6 = Dense(params.denseUnits[1], activation='relu')(h5)
 
@@ -108,9 +117,9 @@ class DeepDPG(BaseAgent):
 
         _out = Dense(1, activation='tanh', kernel_initializer=uniform_init, bias_initializer=uniform_init)(h6)
 
-        model = Model(inputs=[_state], outputs=_out)
+        model = Model(inputs=[_state, _normal_state], outputs=_out)
 
-        return model, _state, _out
+        return model, _state, _normal_state, _out
 
     def criticGrads(self, states, actions):
         """
