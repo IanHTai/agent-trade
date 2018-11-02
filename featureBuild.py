@@ -9,13 +9,25 @@ class FeatureBuilder:
         self.__queueSize = queueSize
 
         # Starting values used for RSI
-        self.upChangeAvg = 0.001
-        self.downChangeAvg = 0.001
+        diffs = [t - s for s, t in zip(self.__queues.getQueue('Close').peekAll(), self.__queues.getQueue('Close').peekAll()[1:])]
+
+        self.upChangeAvg = len([x for x in diffs if x > 0]) / float(queueSize)
+        self.downChangeAvg = len([x for x in diffs if x < 0]) / float(queueSize)
 
         # Starting values used for TEMA
-        self.EMA = sum(self.__queues.getQueue('Close').peekAll()) / float(self.__queues.getQueue('Close').size)
+        self.EMA = self.__queues.getQueue('Close').peek(0)
         self.EMA_2 = self.EMA
         self.EMA_3 = self.EMA
+        alpha = 0.25
+        for i in range(1, queueSize):
+            old_ema = self.EMA
+            old_ema_2 = self.EMA_2
+            self.EMA = alpha * self.__queues.getQueue('Close').peek(i) + (1 - alpha) * self.EMA
+            self.EMA_2 = alpha * self.EMA + (1 - alpha) * old_ema
+            self.EMA_3 = alpha * self.EMA_2 + (1 - alpha) * old_ema_2
+
+        # Change this whenever feature is added/removed
+        self.numFeatures = 6
 
     def getFeatures(self):
 
@@ -29,15 +41,13 @@ class FeatureBuilder:
 
     def addStateObj(self, stateObj):
         self.__queues.putAll(stateObj.inputDict)
+        return self.getCombinedFeatures(stateObj)
+
+    def getCombinedFeatures(self, stateObj=None):
         convFeats = self.getFeatures()
-
-        # Define non-convolutional features
-        normalFeats = np.array([self.williamsR(), self.roc(window=2), self.rsi(window=14), self.tema(alpha=0.25),
-                                self.volume()]).reshape(1, -1)
-
-        return convFeats, normalFeats
-
-
+        normalFeats = np.array([self.cashAmountRatio(stateObj), self.volume(), self.williamsR(), self.roc(window=2),
+                                self.rsi(window=14), self.tema(alpha=0.25)]).reshape(1, -1)
+        return [convFeats, normalFeats]
     def reset(self):
         self.__queues = StockQueues(self.__data, self.__queueSize)
 
@@ -45,6 +55,19 @@ class FeatureBuilder:
     """
     The following functions are for calculating technical indicators
     """
+
+    def cashAmountRatio(self, stateObj):
+        if stateObj is None:
+            return 1
+        stock_value = self.__queues.getQueue('Close').peek()
+        if stateObj.amount == 0:
+            return 1
+        else:
+            stock_amount_value = stock_value * stateObj.amount
+            return stateObj.cash/float(stock_amount_value)
+
+    def volume(self):
+        return self.__queues.getQueue('Volume').peek()
 
     def williamsR(self, window=0):
         if window == 0:
@@ -85,8 +108,7 @@ class FeatureBuilder:
         self.EMA_3 = alpha * self.EMA_2 + (1 - alpha) * old_ema_2
         return 3. * self.EMA - 3. * self.EMA_2 + self.EMA_3
 
-    def volume(self):
-        return self.__queues.getQueue('Volume').peek()
+
 
 class StockQueues:
 

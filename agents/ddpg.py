@@ -11,6 +11,8 @@ import datetime
 from random import choices
 from benchmark import Timer
 from backtest import State
+import os
+import time
 
 DO_PROFILE = True
 
@@ -60,7 +62,7 @@ class DeepDPG(BaseAgent):
 
 
         # Improvised from https://github.com/germain-hug/Deep-RL-Keras/blob/master/DDPG/critic.py
-        self.action_grads = K.function([self.criticS, self.criticA],
+        self.action_grads = K.function([self.criticS, self.criticN_S, self.criticA],
                                        K.gradients(self.criticOut, [self.criticA]))
 
         self.policy_model, self.policyS, self.policyN_S, self.policyOut = self.buildPolicyNet(state_shape, normal_state_shape, policyParams)
@@ -82,7 +84,9 @@ class DeepDPG(BaseAgent):
         h2_conv = Conv1D(params.filters[1], params.kernelSize[1], activation='relu')(h1_conv)
         h3 = Flatten()(h2_conv)
         norm_norm_state = BatchNormalization()(_normal_state)
-        h3_5 = concatenate([h3, norm_norm_state])
+        h1_norm_dense = Dense(params.denseUnits[0], activation='relu')(norm_norm_state)
+        h2_norm_dense = Dense(params.denseUnits[1], activation='relu')(h1_norm_dense)
+        h3_5 = concatenate([h3, h2_norm_dense])
         h4_drop = Dropout(params.dropout)(h3_5)
         h5 = concatenate([h4_drop, _action])
         h6 = Dense(params.denseUnits[0], activation='relu')(h5)
@@ -108,7 +112,9 @@ class DeepDPG(BaseAgent):
         h2_conv = Conv1D(params.filters[1], params.kernelSize[1], activation='relu')(h1_conv)
         h3 = Flatten()(h2_conv)
         norm_norm_state = BatchNormalization()(_normal_state)
-        h3_5 = concatenate([h3, norm_norm_state])
+        h1_norm_dense = Dense(params.denseUnits[0], activation='relu')(norm_norm_state)
+        h2_norm_dense = Dense(params.denseUnits[1], activation='relu')(h1_norm_dense)
+        h3_5 = concatenate([h3, h2_norm_dense])
         h4_drop = Dropout(params.dropout)(h3_5)
         h5 = Dense(params.denseUnits[0], activation='relu')(h4_drop)
         h6 = Dense(params.denseUnits[1], activation='relu')(h5)
@@ -121,12 +127,12 @@ class DeepDPG(BaseAgent):
 
         return model, _state, _normal_state, _out
 
-    def criticGrads(self, states, actions):
+    def criticGrads(self, states, norm_states, actions):
         """
         Returns the gradients of the critic network w.r.t. action taken
         Used to find the policy gradient of the actor network
         """
-        return self.action_grads([states, actions])
+        return self.action_grads([states, norm_states, actions])
 
     def trainActor(self, action_grads, params):
         params_grad = tf.gradients(self.policyOut, self.policy_model.trainable_weights, np.negative(action_grads))
@@ -155,13 +161,13 @@ class DeepDPG(BaseAgent):
         # Populate replaybuffer with random actions first
         # for episode in range(0, 1):
         #     self.current_noise = 0
-        #     state = featureBuilder.getFeatures()
+        #     state = featureBuilder.getCombinedFeatures()
         #     done = False
         #     while not done:
         #         prev_value = backtester.value()
         #         action = self.zeroFriendly(self.noise(self.OUParams))
         #         raw_new_state, reward, done, info = backtester.step(action)
-        #         new_state = featureBuilder.add(raw_new_state)
+        #         new_state = featureBuilder.addStateObj(raw_new_state)
         #         self.replayBuffer.add(state=state, action=action, reward=reward, next_state=new_state, done=done)
         #         state = new_state
         #     featureBuilder.reset()
@@ -172,7 +178,7 @@ class DeepDPG(BaseAgent):
 
         for episode in range(0, self.episodes):
             self.current_noise = 0
-            state = featureBuilder.getFeatures()
+            [conv_state, norm_state] = featureBuilder.getCombinedFeatures()
             cumulative_reward = 1
             done = False
             counter_in_episode = 0
@@ -185,32 +191,41 @@ class DeepDPG(BaseAgent):
                 prev_value = backtester.value()
                 for step_per_batch in range(0, self.steps_per_batch):
                     counter_in_episode += 1
-                    action = self.zeroFriendly(self.policy_model.predict(state)[0][0] + self.noise(self.OUParams))
+                    action = self.zeroFriendly(self.policy_model.predict([conv_state, norm_state])[0][0] + self.noise(self.OUParams))
                     self.timer.checkpoint("Policy model predict")
                     raw_new_state, reward, done, info = backtester.step(action)
                     self.timer.checkpoint("Backtester step")
-                    new_state = featureBuilder.add(raw_new_state)
+                    [new_conv_state, new_norm_state] = featureBuilder.addStateObj(raw_new_state)
                     self.timer.checkpoint("Featurebuilder add")
-                    self.replayBuffer.add(state=state, action=action, reward=reward, next_state=new_state, done=done)
+                    self.replayBuffer.add(conv_state = conv_state, norm_state=norm_state, action=action, reward=reward,
+                                          next_conv_state=new_conv_state, next_norm_state=new_norm_state, done=done)
                     self.timer.checkpoint("Replaybuffer added to")
-                    state = new_state
+                    conv_state = new_conv_state
+                    norm_state = new_norm_state
                     cumulative_reward *= (reward + 1)
 
                 samples = self.replayBuffer.getBatch(self.batch_size)
 
                 self.timer.checkpoint("Batch retrieve from replaybuffer")
 
-                states = np.array(list(e[0] for e in samples))
-                actions = np.array(list(e[1] for e in samples)).reshape(self.batch_size, 1)
-                rewards = np.array(list(e[2] for e in samples))
-                next_states = np.array(list(e[3] for e in samples))
-                dones = np.array(list(e[4] for e in samples))
+                conv_states = np.array(list(e[0] for e in samples))
+                norm_states = np.array(list(e[1] for e in samples))
+                actions = np.array(list(e[2] for e in samples)).reshape(self.batch_size, 1)
+                rewards = np.array(list(e[3] for e in samples))
+                next_conv_states = np.array(list(e[4] for e in samples))
+                next_norm_states = np.array(list(e[5] for e in samples))
+                dones = np.array(list(e[6] for e in samples))
                 y_i = np.array(list(0.0 for _ in samples))
 
                 self.timer.checkpoint("Batch separated into states, actions, etc.")
 
-                states = states.reshape(self.batch_size, self.state_shape, 1)
-                next_states = next_states.reshape(self.batch_size, self.state_shape, 1)
+                conv_states = conv_states.reshape(self.batch_size, self.state_shape, 1)
+
+                norm_states = norm_states.reshape(self.batch_size, self.normal_state_shape)
+
+                next_conv_states = next_conv_states.reshape(self.batch_size, self.state_shape, 1)
+
+                next_norm_states = next_norm_states.reshape(self.batch_size, self.normal_state_shape)
 
                 self.timer.checkpoint("States reshaped")
 
@@ -219,7 +234,10 @@ class DeepDPG(BaseAgent):
 
                 np.putmask(y_i, mask=done_mask, values=rewards[done_mask])
 
-                target_critic_predicted = self.critic_target.predict([next_states[not_done_mask], self.target_policy_model.predict(next_states[not_done_mask])])
+                target_critic_predicted = self.critic_target.predict([next_conv_states[not_done_mask],
+                                                                      next_norm_states[not_done_mask],
+                                                                      self.target_policy_model.predict([next_conv_states[not_done_mask],
+                                                                                                        next_norm_states[not_done_mask]])])
 
                 not_done_values = rewards[not_done_mask] + self.criticParams.discount * target_critic_predicted[0]
                 np.putmask(y_i, mask=not_done_mask, values=not_done_values)
@@ -228,11 +246,11 @@ class DeepDPG(BaseAgent):
                 self.timer.checkpoint("y_i's updated with bellman equation")
 
 
-                self.critic_model.train_on_batch([states, actions], y_i)
+                self.critic_model.train_on_batch([conv_states, norm_states, actions], y_i)
 
                 self.timer.checkpoint("Critic model batch trained")
 
-                criticGrads = self.criticGrads(states, actions)
+                criticGrads = self.criticGrads(conv_states, norm_states, actions)
 
                 self.timer.checkpoint("Critic gradients computed")
 
@@ -262,7 +280,7 @@ class DeepDPG(BaseAgent):
                 Testing, without action space noise
                 """
                 backtester.test(True)
-                state = featureBuilder.getFeatures()
+                state = featureBuilder.getCombinedFeatures()
 
                 #Feature builder shouldn't need to be set in testing mode since its queues should already be filled with the
                 #last of the training sequence's data
@@ -275,7 +293,7 @@ class DeepDPG(BaseAgent):
                     action = self.zeroFriendly(self.policy_model.predict(state))
 
                     raw_new_state, reward, test_done, info = backtester.step(action)
-                    new_state = featureBuilder.add(raw_new_state)
+                    new_state = featureBuilder.addStateObj(raw_new_state)
 
                     state = new_state
 
@@ -295,7 +313,19 @@ class DeepDPG(BaseAgent):
 
         # Use most recent test_cumulative_reward for inclusion in filename
 
-        filename_root = "model_backups\\" + datetime.datetime.now().strftime("%y_%m_%d_%H_%M") + "_" + str(test_cumulative_reward)
+        actor_model_name, critic_model_name = self.saveModels(test_cumulative_reward)
+
+        return train_cumulative_rewards, test_cumulative_rewards, actor_model_name, critic_model_name
+
+    def saveModels(self, test_cumulative_reward):
+        cumR = str(test_cumulative_reward)
+        directory = "model_backups"
+        try:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+        except OSError:
+            print('Error: Creating directory. ' + directory)
+        filename_root = directory + datetime.datetime.now().strftime("%y_%m_%d_%H_%M") + "_" + cumR
 
         actor_model_name = filename_root + "_actor.h5"
 
@@ -304,7 +334,7 @@ class DeepDPG(BaseAgent):
         self.policy_model.save_weights(actor_model_name)
         self.critic_model.save_weights(critic_model_name)
 
-        return train_cumulative_rewards, test_cumulative_rewards, actor_model_name, critic_model_name
+        return actor_model_name, critic_model_name
 
     def loadModels(self, actor_model_name, critic_model_name):
         self.critic_model.load_weights(critic_model_name)
@@ -313,10 +343,16 @@ class DeepDPG(BaseAgent):
         self.critic_target.load_weights(critic_model_name)
 
     def updateTargets(self):
-        critic_target_weights = self.critic_target.get_weights()
+        self.timer.checkpoint("updateTargets start")
+
         critic_weights = self.critic_model.get_weights()
 
+        self.timer.checkpoint("Critic weights gotten")
+
+        critic_target_weights = self.critic_target.get_weights()
+
         self.timer.checkpoint("Critic target weights gotten")
+
         # Have to do the updates in loops because the format of the weights is a list of np arrays
         # The np arrays can be directly multiplied by scalars but the list cannot
 
@@ -357,7 +393,7 @@ class DeepDPG(BaseAgent):
 
 
 class CriticParams:
-    def __init__(self, filters=[16,16,16], kernel_size=[3,3,3], dense_units=[100,100], dropout=0.25):
+    def __init__(self, filters=[16,16,16], kernel_size=[5,5,5], dense_units=[100,100], dropout=0.2):
         self.filters = filters
         self.kernelSize = kernel_size
         self.denseUnits = dense_units
@@ -370,7 +406,7 @@ class CriticParams:
         self.init_maxval = 3e-4
 
 class PolicyParams:
-    def __init__(self, filters=[16,16,16], kernel_size=[3,3,3], dense_units=[100,100], dropout=0.25):
+    def __init__(self, filters=[16,16,16], kernel_size=[5,5,5], dense_units=[100,100], dropout=0.2):
         self.filters = filters
         self.kernelSize = kernel_size
         self.denseUnits = dense_units
@@ -390,10 +426,10 @@ class ReplayBuffer:
         self.max_size = max_size
         self.replayList = []
 
-    def add(self, state, action, reward, next_state, done):
+    def add(self, conv_state, norm_state, action, reward, next_conv_state, next_norm_state, done):
         while len(self.replayList) > self.max_size:
             del self.replayList[0]
-        self.replayList.append([state, action, reward, next_state, done])
+        self.replayList.append([conv_state, norm_state, action, reward, next_conv_state, next_norm_state, done])
 
     def get(self):
         return self.replayList[random.randint(0, len(self.replayList) - 1)]
