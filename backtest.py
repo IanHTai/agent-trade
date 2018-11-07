@@ -24,6 +24,7 @@ class Backtest(ExecuteInterface):
         """
 
         self.__cash = cash
+        self.__startingCash = cash
         self.__stockAmount = 0
         self.__data = data
         self.__counter = counter
@@ -31,7 +32,7 @@ class Backtest(ExecuteInterface):
         self.__concQueue = Queue()
         self.__simple = simple
 
-        self.__train_len = trainSplit*len(data)
+        self.__train_len = int(trainSplit*len(data))
         self.__test = False
 
         self.__counter_limit = self.__train_len
@@ -41,6 +42,16 @@ class Backtest(ExecuteInterface):
         self.__perShareFee = perShareFee
 
         self.__stateObj = stateObj
+        self.justReset = False
+
+    def resetValues(self):
+        self.__cash = self.__startingCash
+        self.__stockAmount = 0
+        self.justReset = True
+
+    @property
+    def stockPrice(self):
+        return self.__data[self.__counter]['Close']
 
     def buy(self, amount):
         """
@@ -49,15 +60,25 @@ class Backtest(ExecuteInterface):
         :return: order successfully received by simulated broker
         """
 
+
         if self.__cash < max(self.__minBrokerFee, self.__perShareFee * amount):
             self.__counter += 1
             return False
         else:
+            price = self.stockPrice
+            # Check if there will be enough in the account for another transaction after buy
+            # If not, buy one less of the stock
+            # Assumes that stock price >= commission
+            if self.__cash <= self.__minBrokerFee + amount * price + max(self.__minBrokerFee, self.__perShareFee * amount):
+                amount -= 1
+
+                if amount <= 0:
+                    return False
+
             # Random chance of failure
             if random.random() < self.FAILURE_CHANCE:
                 return False
             else:
-                price = self.__data[self.__counter]['Close']
                 if amount * price + max(self.__minBrokerFee, self.__perShareFee * amount) > self.__cash:
                     amount = math.floor((self.__cash - max(self.__minBrokerFee, self.__perShareFee * amount))/price)
                 self.__cash -= max(self.__minBrokerFee, self.__perShareFee * amount)
@@ -97,22 +118,32 @@ class Backtest(ExecuteInterface):
             self.__concQueue.put([-amount, price*amount])
 
     def sell(self, amount):
+        if amount <= 0:
+            self.__counter += 1
+            return False
         if amount > self.__stockAmount:
-            amount == self.__stockAmount
+            amount = self.__stockAmount
+
+        if self.__cash > self.__minBrokerFee and self.cash() <= self.__perShareFee * amount:
+            amount = math.floor(self.__cash / self.__perShareFee)
+
         if self.__cash < max(self.__minBrokerFee, self.__perShareFee * amount):
             self.__counter += 1
             return False
         else:
             self.__cash -= max(self.__minBrokerFee, self.__perShareFee * amount)
-            price = self.__data[self.__counter]['Close']
+            price = self.stockPrice
             self.__counter += 1
             if not amount == 0:
                 if not self.__simple:
                     Thread(target=self.orderSim, args=(False, price, amount)).start()
+                    return True
                 else:
                     self.__cash += price * amount
                     self.__stockAmount -= amount
-            return True
+                    return True
+            else:
+                return False
 
     def doNothing(self):
         self.__counter += 1
@@ -127,19 +158,28 @@ class Backtest(ExecuteInterface):
             cashDelta += cash
         self.__cash += cashDelta
         self.__stockAmount += amountDelta
-        return self.__cash + self.__stockAmount*self.__data[self.__counter]['Close']
+        return self.__cash + self.__stockAmount*self.stockPrice
 
     def step(self, actionValue):
         old_value = self.value()
+        buy = False
+        doNothing = False
+        sell = False
         if actionValue > 0:
-            success = self.buy(math.ceil(actionValue*math.floor(self.__cash/self.__data[self.__counter]['Close'])))
+            buy = self.buy(math.ceil(actionValue*math.floor(self.__cash/self.stockPrice)))
         elif actionValue < 0:
             actionValue = -actionValue
-            success = self.sell(math.ceil(actionValue*self.__stockAmount))
+            sell = self.sell(math.ceil(actionValue*self.__stockAmount))
         else:
-            success = self.doNothing()
+            doNothing = self.doNothing()
 
-        reward = self.value() / float(old_value) - 1
+        # if self.__cash <= 1:
+        #     print(self.__cash, "cash is <= 1")
+        #     print(actionValue, buy, sell, doNothing)
+        #     print("buy amount: ", math.ceil(actionValue*math.floor(self.__cash/self.stockPrice)))
+        #     print("sell amount: ", math.ceil(actionValue*self.__stockAmount))
+
+        reward = self.reward(new_value=self.value(), old_value=old_value, cash=self.__cash, stockAmount=self.__stockAmount)
 
         if self.__counter >= self.__counter_limit - 1:
             done = True
@@ -150,6 +190,22 @@ class Backtest(ExecuteInterface):
 
         return state, reward, done, {}
 
+    def reward(self, new_value, old_value, cash, stockAmount):
+        """
+        Custom reward function
+        :param new_value: value after step (cash + stockamount * stockprice)
+        :param old_value: value after step
+        :param cash: amount of cash after step
+        :param stockAmount: stock amount held after step
+        :return: reward value
+        """
+        if self.justReset:
+            self.justReset = False
+            return new_value / float(self.__startingCash) - 1
+        # elif cash < 100.0:
+        #     return -0.9
+        else:
+            return new_value / float(old_value) - 1
 
     def returnState(self, inputDict, cash, amount, value):
         if self.__stateObj:
@@ -159,14 +215,20 @@ class Backtest(ExecuteInterface):
 
     def reset(self):
         self.__counter = self.__initCounter
+        self.__cash = self.__startingCash
+        self.__stockAmount = 0
 
     def test(self, test_bool=False):
         self.__test = test_bool
 
         if test_bool:
+            self.__cash = self.__startingCash
+            self.__stockAmount = 0
             self.__counter = self.__train_len
             self.__counter_limit = len(self.__data)
         else:
+            self.__cash = self.__startingCash
+            self.__stockAmount = 0
             self.__counter = self.__initCounter
             self.__counter_limit = self.__train_len
 

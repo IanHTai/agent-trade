@@ -75,6 +75,10 @@ class FeatureBuilder:
         highest = max(self.__queues.getQueue('High').peekAll()[-window:])
         lowest = min(self.__queues.getQueue('Low').peekAll()[-window:])
         close = self.__queues.getQueue('Close').peek()
+
+        if highest == lowest:
+            return -1.0
+
         return -1.0*(highest - close)/(highest - lowest)
 
     def roc(self, window=0):
@@ -96,7 +100,10 @@ class FeatureBuilder:
         self.upChangeAvg = (self.upChangeAvg * (window - 1) + currentGain) / window
         self.downChangeAvg = (self.downChangeAvg * (window - 1) + currentLoss) / window
 
-        RS = self.upChangeAvg / self.downChangeAvg
+        if self.upChangeAvg == self.downChangeAvg:
+            RS = 1
+        else:
+            RS = self.upChangeAvg / self.downChangeAvg
 
         return 1. - 1. / (1 + RS)
 

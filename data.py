@@ -56,6 +56,6 @@ class TypedDictReader(csv.DictReader):
             # apply type conversions
             iconverted = (x(y) for (x,y) in zip(self._fieldtypes, ivalues))
             # pass the field names and the converted values to the dict constructor
-            d = dict(zip(self._fieldnames, iconverted))
+            out = dict(zip(self._fieldnames, iconverted))
 
-        return d
+        return out
