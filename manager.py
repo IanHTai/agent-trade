@@ -17,7 +17,8 @@ class Manager:
         """
 
         if self.__train:
-            self.__agent.train(featureBuilder=self.__featureBuild, backtester=self.__backtest)
+            train_cumulative_rewards, test_cumulative_rewards = self.__agent.train(featureBuilder=self.__featureBuild, backtester=self.__backtest)
+            self.__agent.saveModels(test_cumulative_rewards[-1])
 
         else:
             stop_flag = False

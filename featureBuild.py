@@ -9,10 +9,10 @@ class FeatureBuilder:
         self.__queueSize = queueSize
 
         # Starting values used for RSI
-        diffs = [t - s for s, t in zip(self.__queues.getQueue('Close').peekAll(), self.__queues.getQueue('Close').peekAll()[1:])]
+        diffs = [t - s for s, t in zip(self.__queues.getQueue('Close').peekAll()[:1], self.__queues.getQueue('Close').peekAll()[1:])]
 
-        self.upChangeAvg = len([x for x in diffs if x > 0]) / float(queueSize)
-        self.downChangeAvg = len([x for x in diffs if x < 0]) / float(queueSize)
+        self.upChangeAvg = sum([x for x in diffs if x > 0]) / float(queueSize)
+        self.downChangeAvg = - sum([x for x in diffs if x < 0]) / float(queueSize)
 
         # Starting values used for TEMA
         self.EMA = self.__queues.getQueue('Close').peek(0)
@@ -95,12 +95,12 @@ class FeatureBuilder:
         last = self.__queues.getQueue('Close').peek(-2)
         current = self.__queues.getQueue('Close').peek()
         currentGain = max(0, current - last)
-        currentLoss = min(0, current - last)
+        currentLoss = - min(0, current - last)
 
         self.upChangeAvg = (self.upChangeAvg * (window - 1) + currentGain) / window
         self.downChangeAvg = (self.downChangeAvg * (window - 1) + currentLoss) / window
 
-        if self.upChangeAvg == self.downChangeAvg:
+        if self.upChangeAvg == self.downChangeAvg or self.downChangeAvg == 0:
             RS = 1
         else:
             RS = self.upChangeAvg / self.downChangeAvg

@@ -42,12 +42,10 @@ class Backtest(ExecuteInterface):
         self.__perShareFee = perShareFee
 
         self.__stateObj = stateObj
-        self.justReset = False
 
     def resetValues(self):
         self.__cash = self.__startingCash
         self.__stockAmount = 0
-        self.justReset = True
 
     @property
     def stockPrice(self):
@@ -62,7 +60,6 @@ class Backtest(ExecuteInterface):
 
 
         if self.__cash < max(self.__minBrokerFee, self.__perShareFee * amount):
-            self.__counter += 1
             return False
         else:
             price = self.stockPrice
@@ -82,7 +79,6 @@ class Backtest(ExecuteInterface):
                 if amount * price + max(self.__minBrokerFee, self.__perShareFee * amount) > self.__cash:
                     amount = math.floor((self.__cash - max(self.__minBrokerFee, self.__perShareFee * amount))/price)
                 self.__cash -= max(self.__minBrokerFee, self.__perShareFee * amount)
-                self.__counter += 1
                 if not amount == 0:
                     if not self.__simple:
                         Thread(target=self.orderSim, args=(True, price, amount)).start()
@@ -119,7 +115,6 @@ class Backtest(ExecuteInterface):
 
     def sell(self, amount):
         if amount <= 0:
-            self.__counter += 1
             return False
         if amount > self.__stockAmount:
             amount = self.__stockAmount
@@ -128,12 +123,10 @@ class Backtest(ExecuteInterface):
             amount = math.floor(self.__cash / self.__perShareFee)
 
         if self.__cash < max(self.__minBrokerFee, self.__perShareFee * amount):
-            self.__counter += 1
             return False
         else:
             self.__cash -= max(self.__minBrokerFee, self.__perShareFee * amount)
             price = self.stockPrice
-            self.__counter += 1
             if not amount == 0:
                 if not self.__simple:
                     Thread(target=self.orderSim, args=(False, price, amount)).start()
@@ -144,9 +137,6 @@ class Backtest(ExecuteInterface):
                     return True
             else:
                 return False
-
-    def doNothing(self):
-        self.__counter += 1
 
     def value(self):
         cashDelta = 0
@@ -170,8 +160,8 @@ class Backtest(ExecuteInterface):
         elif actionValue < 0:
             actionValue = -actionValue
             sell = self.sell(math.ceil(actionValue*self.__stockAmount))
-        else:
-            doNothing = self.doNothing()
+
+        self.__counter += 1
 
         # if self.__cash <= 1:
         #     print(self.__cash, "cash is <= 1")
@@ -199,13 +189,12 @@ class Backtest(ExecuteInterface):
         :param stockAmount: stock amount held after step
         :return: reward value
         """
-        if self.justReset:
-            self.justReset = False
-            return new_value / float(self.__startingCash) - 1
-        # elif cash < 100.0:
-        #     return -0.9
-        else:
-            return new_value / float(old_value) - 1
+        delta = new_value / float(old_value) - 1
+        # delta *= 10
+        # if delta < 0:
+        #     delta *= 2
+
+        return delta
 
     def returnState(self, inputDict, cash, amount, value):
         if self.__stateObj:
@@ -234,6 +223,10 @@ class Backtest(ExecuteInterface):
 
     def cash(self):
         return self.__cash
+
+    @property
+    def counterLimit(self):
+        return self.__counter_limit
 
     def stockAmount(self):
         return self.__stockAmount

@@ -82,6 +82,8 @@ class DeepDPG(BaseAgent):
         updates += self.policy_model.updates
         self.trainActor = K.function(state_inputs, [], updates=updates)
 
+        self.policy_predict = K.function([self.policyS, self.policyN_S], [self.policyOut], updates=self.policy_model.state_updates, name='policy_predict_function')
+
         self.critic_target = util.clone_model(self.critic_model)
         self.target_policy_model = util.clone_model(self.policy_model)
 
@@ -221,11 +223,11 @@ class DeepDPG(BaseAgent):
         for episode in range(0, self.episodes):
 
             print('\n\n\nEpisode', episode, '\n\n')
-
+            next_random_reset = 0
 
             self.current_noise = 0
             [conv_state, norm_state] = featureBuilder.getCombinedFeatures()
-            cumulative_reward = 1
+            cumulative_reward = 0
             done = False
             counter_in_episode = 0
             div_counter = 0
@@ -239,7 +241,7 @@ class DeepDPG(BaseAgent):
 
                 for step_per_batch in range(0, self.steps_per_batch):
                     counter_in_episode += 1
-                    action = self.boundAction(self.policy_model.predict_on_batch([conv_state, norm_state])[0][0] + self.noise(self.OUParams))
+                    action = self.boundAction(self.policy_predict([conv_state, norm_state])[0][0][0] + self.noise(self.OUParams))
 
                     self.timer.checkpoint("Policy model predict")
                     raw_new_state, reward, done, info = backtester.step(action)
@@ -251,7 +253,12 @@ class DeepDPG(BaseAgent):
                     self.timer.checkpoint("Replaybuffer added to")
                     conv_state = new_conv_state
                     norm_state = new_norm_state
-                    cumulative_reward += reward
+
+                    """
+                    Make cumulative rewards multiplicative
+                    """
+
+                    cumulative_reward = (cumulative_reward + 1) * (reward + 1) - 1
 
                 samples = self.replayBuffer.getBatch(self.batch_size)
 
@@ -303,19 +310,17 @@ class DeepDPG(BaseAgent):
 
                 self.timer.checkpoint("Actor model batch trained")
 
-
-                if not (counter_in_episode // self.trunc_norm(100, 25, 70) == reset_div_counter):
-                    reset_div_counter = counter_in_episode // 100
+                if counter_in_episode == next_random_reset:
+                    next_random_reset = counter_in_episode + self.trunc_norm(100, 25, 70)
                     valuesReset = self.randomResetValues(backtester, episode=episode, step=counter_in_episode)
 
                 self.updateTargets()
 
                 self.timer.checkpoint("Targets updated and episode step complete")
 
-                if not (counter_in_episode // 10000 == div_counter):
+                if (counter_in_episode + (episode * backtester.counterLimit)) // 10000 > div_counter:
 
-                    print("Replay buffer size in MB:", sys.getsizeof(self.replayBuffer.replayList) / 1024.0 / 1024.0)
-                    div_counter = counter_in_episode // 10000
+                    div_counter = (counter_in_episode + (episode * backtester.counterLimit)) // 10000
                     print(datetime.datetime.now(), "Data Point:", counter_in_episode)
                     print("Cumulative reward in episode so far:", cumulative_reward)
                     print("Value so far:", backtester.value())
@@ -332,6 +337,7 @@ class DeepDPG(BaseAgent):
                     self.timer.printDict()
 
                     gc.collect()
+                    self.timer.checkpoint("Intermediate evaluation complete")
                 
 
             backtester.reset()
@@ -339,7 +345,7 @@ class DeepDPG(BaseAgent):
 
             train_cumulative_rewards.append(cumulative_reward)
 
-            if episode % 1 == 0:
+            if episode % 2 == 0:
                 """
                 Testing, without action space noise
                 """
@@ -349,27 +355,32 @@ class DeepDPG(BaseAgent):
                 #Feature builder shouldn't need to be set in testing mode since its queues should already be filled with the
                 #last of the training sequence's data
 
-                test_cumulative_reward = 1
+                test_cumulative_reward = 0
                 test_done = False
 
                 starting_price = backtester.stockPrice
+                starting_value = backtester.value()
 
                 while not test_done:
                     prev_value = backtester.value()
-                    action = self.policy_model.predict(state)
+                    action = self.zeroFriendly(self.policy_predict(state)[0][0][0])
 
                     raw_new_state, reward, test_done, info = backtester.step(action)
                     new_state = featureBuilder.addStateObj(raw_new_state)
 
                     state = new_state
 
-                    test_cumulative_reward += (reward + 1)
+                    test_cumulative_reward = (test_cumulative_reward + 1) * (reward + 1) - 1
 
                 ending_price = backtester.stockPrice
-
-                print("Cash Percentage:", backtester.cash() / (backtester.stockAmount() * backtester.stockPrice))
-                test_alpha = (test_cumulative_reward - (starting_price / float(ending_price))) * 100
+                cash_percentage = 1
+                if backtester.stockAmount() > 0:
+                    cash_percentage = backtester.cash() / (backtester.stockAmount() * backtester.stockPrice)
+                print("Cash Percentage:", cash_percentage)
+                print("End Value:", backtester.value())
+                test_alpha = ((backtester.value()/float(starting_value)) - (ending_price / float(starting_price))) * 100
                 print("Test alpha:", test_alpha)
+                print("Profit percentage:", ((backtester.value()/float(starting_value)) - 1) * 100)
 
                 backtester.test(False)
                 backtester.reset()
@@ -377,6 +388,7 @@ class DeepDPG(BaseAgent):
                 print("Testing Episode Complete. Cumulative Test Reward:", test_cumulative_reward)
 
                 test_cumulative_rewards.append(test_cumulative_reward)
+                self.timer.checkpoint("Test complete")
 
             featureBuilder.reset()
 
@@ -385,9 +397,7 @@ class DeepDPG(BaseAgent):
 
         # Use most recent test_cumulative_reward for inclusion in filename
 
-        actor_model_name, critic_model_name = self.saveModels(test_cumulative_reward)
-
-        return train_cumulative_rewards, test_cumulative_rewards, actor_model_name, critic_model_name
+        return train_cumulative_rewards, test_cumulative_rewards
 
     def saveModels(self, test_cumulative_reward):
         cumR = str(test_cumulative_reward)
