@@ -7,9 +7,10 @@ class Data:
 
     """
 
-    def __init__(self, interval, live=False):
+    def __init__(self, interval, live=False, EOD=False):
         self.__interval = interval
         self.__live = live
+        self.EOD = EOD
 
     def checkMarket(self):
         """
@@ -32,7 +33,10 @@ class Data:
 
     def loadData(self, filename):
         with open(filename, 'r') as dataFile:
-            reader = TypedDictReader(dataFile, delimiter=',', fieldtypes=[str, str, float, float, float, float, int])
+            if self.EOD:
+                reader = TypedDictReader(dataFile, delimiter=',', fieldtypes=[str, float, float, float, float, int])
+            else:
+                reader = TypedDictReader(dataFile, delimiter=',', fieldtypes=[str, str, float, float, float, float, int])
             self.__data = [r for r in reader]
 
     def __getitem__(self, item):
@@ -56,6 +60,6 @@ class TypedDictReader(csv.DictReader):
             # apply type conversions
             iconverted = (x(y) for (x,y) in zip(self._fieldtypes, ivalues))
             # pass the field names and the converted values to the dict constructor
-            d = dict(zip(self._fieldnames, iconverted))
+            out = dict(zip(self._fieldnames, iconverted))
 
-        return d
+        return out

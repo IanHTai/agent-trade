@@ -2,12 +2,13 @@ import backtest
 import featureBuild
 
 class Manager:
-    def __init__(self, data, agent, trader, train=True, queueSize=10):
+    def __init__(self, data, agent, featureB, backtester, trader, train=True):
         self.__data = data
         self.__agent = agent
         self.__trader = trader
         self.__train = train
-        self.__queueSize = queueSize
+        self.__backtest = backtester
+        self.__featureBuild = featureB
 
     def run(self):
         """
@@ -16,11 +17,8 @@ class Manager:
         """
 
         if self.__train:
-
-            self.__backtest = backtest.Backtest(cash=10000, data=self.__data, counter=self.__queueSize, minBrokerFee=1.00, perShareFee=0.0075)
-            self.__featureBuild = featureBuild.FeatureBuilder(data=self.__data, queueSize=self.__queueSize)
-
-            self.__agent.train(featureBuilder=self.__featureBuild, backtester=self.__backtest)
+            train_cumulative_rewards, test_cumulative_rewards = self.__agent.train(featureBuilder=self.__featureBuild, backtester=self.__backtest)
+            self.__agent.saveModels(test_cumulative_rewards[-1])
 
         else:
             stop_flag = False
