@@ -15,4 +15,4 @@ This is a reinforcement-learning platform for stock trading, and is currently st
 
 ## Notice
 
-As of November 1, 2018, this repository will be cloned and made private, where all future work will take place (unless otherwise specified).
+~~As of November 1, 2018, this repository will be cloned and made private, where all future work will take place (unless otherwise specified).~~ Up-to-date changes are now on this public repository.
